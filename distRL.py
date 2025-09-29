@@ -1,21 +1,14 @@
-import argparse
-import math
-import random
-from dataclasses import dataclass
-from typing import Tuple
-
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+from typing import Tuple
 
 from loss import RewardAwareCosineHingeLoss
+import random
 
-# -----------------------------
-# Utilities
-# -----------------------------
-
+import wandb
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -25,16 +18,20 @@ def set_seed(seed: int):
 
 
 class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden: int = 64, max_action: float = 2.0, min_action: float = -2.0):
+    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64, max_action: float = 2.0, min_action: float = -2.0):
         super().__init__()
         self.max_action = max_action
         self.min_action = min_action
 
         # Policy network outputs mean and log_std (state-independent log_std for simplicity)
         self.actor = nn.Sequential(
-            nn.Linear(obs_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, act_dim),
+            nn.Linear(obs_dim, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, act_dim),
             nn.Tanh(),
 
         )
@@ -47,14 +44,16 @@ class Actor(nn.Module):
 
 
 class Distance(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden: int = 64):
+    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64):
         super().__init__()
         self.dist = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
-            nn.ReLU(),
-            nn.Linear(hidden, hidden),
+            nn.Linear(obs_dim + act_dim, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),            
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),            
+            nn.Linear(hidden_size, hidden_size),
         )
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
@@ -64,7 +63,7 @@ class Distance(nn.Module):
 
 
 class RolloutBuffer:
-    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, hidden_dim: int, device):
+    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, hidden_size_dim: int, device):
         self.obs = torch.zeros((buffer_size, obs_dim),
                                dtype=torch.float32, device=device)
         self.actions = torch.zeros(
@@ -114,22 +113,21 @@ class RolloutBuffer:
 
 class DistanceAgent:
     def __init__(
-        self,
-        # env_id="Ant-v4",
-        # env_id="Ant-v3",
-        env_id="Pendulum-v1",
+        self,        
+        env_id,        
         seed=0,
-        total_steps=20_000,
+        total_steps=20_000,        
         buffer_size=10**5,
-        update_epochs=1,
+        update_epochs_train=1,
+        update_epochs_val=1,
         batch_size=64,
         distance_training_start=64,
         policy_training_start=500,
-        number_of_comparisons=500,
-        number_of_topk=5,
+        val_training_start=500,
         lr=3e-4,
-        hidden=64,
+        hidden_size=64,
         device="cpu",
+        wandb_run=None,        
         eval_episodes=5,
     ):
         set_seed(seed)
@@ -138,8 +136,7 @@ class DistanceAgent:
         # Env
         self.env = gym.make(env_id)
         self.eval_env = gym.make(env_id)
-        assert isinstance(self.env.action_space, gym.spaces.Box)                
-        assert policy_training_start >= number_of_comparisons, "Policy training start must be >= number of comparisons."
+        assert isinstance(self.env.action_space, gym.spaces.Box)                        
 
         obs_dim = int(np.prod(self.env.observation_space.shape))
         act_dim = int(np.prod(self.env.action_space.shape))
@@ -153,7 +150,7 @@ class DistanceAgent:
         self.actor = Actor(
             obs_dim=obs_dim,
             act_dim=act_dim,
-            hidden=hidden,
+            hidden_size=hidden_size,
             max_action=max_action,
             min_action=min_action
         ).to(self.device)
@@ -161,7 +158,7 @@ class DistanceAgent:
         self.distance = Distance(
             obs_dim=obs_dim,
             act_dim=act_dim,
-            hidden=hidden,
+            hidden_size=hidden_size,
         ).to(self.device)
 
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=lr)
@@ -169,19 +166,21 @@ class DistanceAgent:
 
         # Buffer + hyperparams
         self.buffer = RolloutBuffer(
-            buffer_size, obs_dim, act_dim, hidden,
+            buffer_size, obs_dim, act_dim, hidden_size,
             self.device)
 
         self.distance_training_start = distance_training_start
         self.total_steps = total_steps
-        self.update_epochs = update_epochs
+        self.update_epochs_train = update_epochs_train
+        self.update_epochs_val = update_epochs_val
         self.batch_size = batch_size
         self.policy_training_start = policy_training_start
-        self.number_of_comparisons = number_of_comparisons
-        self.number_of_topk = number_of_topk
+        self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
-
-        assert batch_size % 2 == 0, "Batch size must be even for distance training."
+        
+        self.wandb_run = wandb_run
+        
+        
 
     def train_distance(self, buffer: RolloutBuffer):
         obs, actions, rewards, dones = buffer.get_batch(self.batch_size)
@@ -201,7 +200,7 @@ class DistanceAgent:
         self.distance_optimizer.step()
 
     def train_policy(self):
-        for _ in range(self.update_epochs):
+        for _ in range(self.update_epochs_train):
             obs_batch, _, _, _ = self.buffer.get_batch(self.batch_size)
             # Compute distance features
 
@@ -250,7 +249,7 @@ class DistanceAgent:
             torch_obs = torch.tensor(
                 obs, dtype=torch.float32, device=self.device).unsqueeze(0)
             action = self.actor(torch_obs).detach().cpu().numpy()[0]
-            noise = np.random.normal(0, 0.3, size=action.shape)
+            noise = np.random.normal(0, 0.1, size=action.shape)
             action = (action + noise).clip(
                 self.env.action_space.low, self.env.action_space.high)
             
@@ -290,43 +289,3 @@ class DistanceAgent:
                 obs, _ = self.env.reset()
                 
             
-
-
-# -----------------------------
-# CLI
-# -----------------------------
-def main():
-    # parser = argparse.ArgumentParser(
-    #     description="Quick custom PPO for Gymnasium Pendulum-v1")
-    # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
-    # parser.add_argument("--seed", type=int, default=0)
-    # parser.add_argument("--device", type=str, default="cpu")
-    # parser.add_argument("--total-steps", type=int, default=200_000)
-    # parser.add_argument("--rollout-steps", type=int, default=2048)
-    # parser.add_argument("--update-epochs", type=int, default=10)
-    # parser.add_argument("--batch-size", type=int, default=64)
-    # parser.add_argument("--gamma", type=float, default=0.99)
-    # parser.add_argument("--gae-lambda", type=float, default=0.95)
-    # parser.add_argument("--clip-coef", type=float, default=0.2)
-    # parser.add_argument("--vf-coef", type=float, default=0.5)
-    # parser.add_argument("--ent-coef", type=float, default=0.0)
-    # parser.add_argument("--max-grad-norm", type=float, default=0.5)
-    # parser.add_argument("--lr", type=float, default=3e-4)
-    # parser.add_argument("--hidden", type=int, default=64)
-    # parser.add_argument("--eval-episodes", type=int, default=5)
-    # args = parser.parse_args()
-
-    agent = DistanceAgent(
-        # env_id=args.env_id,
-        # seed=args.seed,
-        # batch_size=args.batch_size,
-        # lr=args.lr,
-        # hidden=args.hidden,
-        # device=args.device,
-        # eval_episodes=args.eval_episodes,
-    )
-    agent.train()
-
-
-if __name__ == "__main__":
-    main()
