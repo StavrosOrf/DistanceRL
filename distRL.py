@@ -5,10 +5,12 @@ import torch.nn as nn
 import torch.optim as optim
 from typing import Tuple
 
-from loss import RewardAwareCosineHingeLoss
+from loss import reward_aware_cosine_loss_exp
 import random
-
 import wandb
+
+from models import Actor, Distance
+from utils import RolloutBuffer
 
 def set_seed(seed: int):
     random.seed(seed)
@@ -16,109 +18,15 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-
-class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64, max_action: float = 2.0, min_action: float = -2.0):
-        super().__init__()
-        self.max_action = max_action
-        self.min_action = min_action
-
-        # Policy network outputs mean and log_std (state-independent log_std for simplicity)
-        self.actor = nn.Sequential(
-            nn.Linear(obs_dim, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
-            nn.Linear(hidden_size, act_dim),
-            nn.Tanh(),
-
-        )
-
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Returns: action, log_prob, value, mean_action (deterministic)
-        """
-        return self.actor(obs) * self.max_action
-
-
-class Distance(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64):
-        super().__init__()
-        self.dist = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),            
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),            
-            nn.Linear(hidden_size, hidden_size),
-        )
-
-    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        # Concatenate observations and actions for distance computation
-        x = torch.cat([obs, actions], dim=-1)
-        return self.dist(x)
-
-
-class RolloutBuffer:
-    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, hidden_size_dim: int, device):
-        self.obs = torch.zeros((buffer_size, obs_dim),
-                               dtype=torch.float32, device=device)
-        self.actions = torch.zeros(
-            (buffer_size, act_dim), dtype=torch.float32, device=device)
-        self.rewards = torch.zeros(
-            (buffer_size,), dtype=torch.float32, device=device)
-        self.dones = torch.zeros(
-            (buffer_size,), dtype=torch.float32, device=device)
-        self.ptr = 0
-        self.entry_count = 0
-        self.max_size = buffer_size
-        self.device = device
-
-    def add(self, obs, action, reward, done):
-        self.ptr += 1
-        self.entry_count += 1
-        if self.ptr >= self.max_size:
-            self.ptr = 0  # Overwrite when buffer is full
-
-        self.obs[self.ptr] = torch.tensor(
-            obs, dtype=torch.float32, device=self.device)
-        self.actions[self.ptr] = torch.tensor(
-            action, dtype=torch.float32, device=self.device)
-        self.rewards[self.ptr] = torch.tensor(
-            reward, dtype=torch.float32, device=self.device)
-        self.dones[self.ptr] = torch.tensor(
-            done, dtype=torch.float32, device=self.device)
-
-    def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:        
-        # print(f"Buffer ptr: {self.ptr}, max size: {self.max_size}, batch size: {batch_size}, entry count: {self.entry_count}")
-        if self.entry_count >= self.max_size:
-            idxs = np.random.choice(self.max_size, size=batch_size, replace=False)
-        else:
-            idxs = np.random.choice(self.ptr, size=batch_size, replace=False)
-
-        return (
-            self.obs[idxs].detach(),
-            self.actions[idxs].detach(),
-            self.rewards[idxs].detach(),
-            self.dones[idxs].detach(),
-        )
-
-# -----------------------------
-# Distance Agent
-# -----------------------------
-
-
 class DistanceAgent:
     def __init__(
-        self,        
-        env_id,        
-        seed=0,
-        total_steps=20_000,        
+        self,
+        env_id,
+        seed,
+        K=5,
+        total_steps=20_000,
         buffer_size=10**5,
-        update_epochs_train=1,
+        update_epochs_policy=1,
         update_epochs_val=1,
         batch_size=64,
         distance_training_start=64,
@@ -127,8 +35,10 @@ class DistanceAgent:
         lr=3e-4,
         hidden_size=64,
         device="cpu",
-        wandb_run=None,        
+        wandb_run=None,
         eval_episodes=5,
+        v_gamma=1.0,
+        **kwargs,
     ):
         set_seed(seed)
         self.device = torch.device(device)
@@ -136,15 +46,31 @@ class DistanceAgent:
         # Env
         self.env = gym.make(env_id)
         self.eval_env = gym.make(env_id)
-        assert isinstance(self.env.action_space, gym.spaces.Box)                        
+        assert isinstance(self.env.action_space, gym.spaces.Box)
 
         obs_dim = int(np.prod(self.env.observation_space.shape))
         act_dim = int(np.prod(self.env.action_space.shape))
         min_action = self.env.action_space.low[0]
         max_action = self.env.action_space.high[0]
 
+        # Print nicely and compact info about the training parameters
+        print("="*65)
+        print("            TRAINING CONFIGURATION")
+        print("="*65)
+        print(f"Environment: {env_id:15s} | Seed:         {seed:5}")
+        print(f"Total Steps: {total_steps:15d} | Buffer Size: {buffer_size:5}")
+        print(f"Batch Size:  {batch_size:15d} | Hidden Size:  {hidden_size:5}")
+        print(f"Learn. Rate: {lr:15} | Device:         {device:5}")
+        print(
+            f"Dist. Start: {distance_training_start:15} | Policy Start: {policy_training_start:5}")
+        print(
+            f"Val Start:   {val_training_start:15} | Eval Ep.:     {eval_episodes:5}")
+        print(
+            f"Train Ep.:   {update_epochs_policy:15} | Val Ep.:      {update_epochs_val:5}")
+        print("="*65)
         print(f"Observation space: {self.env.observation_space}")
         print(f"Action space: {self.env.action_space}")
+        print("="*65)
 
         # Model
         self.actor = Actor(
@@ -162,82 +88,64 @@ class DistanceAgent:
         ).to(self.device)
 
         self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=lr)
-        self.distance_optimizer = optim.AdamW(self.distance.parameters(), lr=lr)
+        self.distance_optimizer = optim.AdamW(
+            self.distance.parameters(), lr=lr)
 
-        # Buffer + hyperparams
         self.buffer = RolloutBuffer(
             buffer_size, obs_dim, act_dim, hidden_size,
             self.device)
 
+        self.K = K
         self.distance_training_start = distance_training_start
         self.total_steps = total_steps
-        self.update_epochs_train = update_epochs_train
+        self.update_epochs_policy = update_epochs_policy
         self.update_epochs_val = update_epochs_val
         self.batch_size = batch_size
         self.policy_training_start = policy_training_start
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
-        
+
+        self.v_gamma = 1
+
         self.wandb_run = wandb_run
-        
-        
 
-    def train_distance(self, buffer: RolloutBuffer):
-        obs, actions, rewards, dones = buffer.get_batch(self.batch_size)
+    def get_action(self, obs: np.ndarray) -> np.ndarray:
+        obs_tensor = torch.tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
+        action = self.actor(obs_tensor).detach().cpu().numpy()[0]
+        return action
 
-        # Compute pairwise distances and rewards
-        d1 = self.distance(obs[:self.batch_size // 2],
-                           actions[:self.batch_size // 2])
-        d2 = self.distance(obs[self.batch_size // 2:],
-                           actions[self.batch_size // 2:])
-        v1 = rewards[:self.batch_size // 2]
-        v2 = rewards[self.batch_size // 2:]
+    def train_distance(self):
 
-        # Optimize distance model
-        self.distance_optimizer.zero_grad()
-        distance_loss = RewardAwareCosineHingeLoss()(d1, d2, v1, v2)
-        distance_loss.backward()
-        self.distance_optimizer.step()
+        for _ in range(self.update_epochs_policy):
+            obs, actions, rewards, _ = self.buffer.get_batch(self.batch_size)
+
+            embeddings = self.distance(obs, actions)
+            distance_loss, info = reward_aware_cosine_loss_exp(
+                embeddings=embeddings,
+                utilities=rewards,
+                beta=None,
+                gamma=self.v_gamma,
+            )
+
+            self.distance_optimizer.zero_grad()
+            distance_loss.backward()
+            # calculate the norm of the gradients, dont clip
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.distance.parameters(), max_norm=1.0)            
+            self.distance_optimizer.step()
+
+            if self.wandb_run is not None:
+                self.wandb_run.log(
+                    {"train/dist_loss": distance_loss.item(),
+                    **{f"train/dist_{k}": v for k, v in info.items()},
+                    "train/dist_grad_norm": grad_norm})
 
     def train_policy(self):
-        for _ in range(self.update_epochs_train):
+        for _ in range(self.update_epochs_policy):
             obs_batch, _, _, _ = self.buffer.get_batch(self.batch_size)
             # Compute distance features
 
             action_pred = self.actor(obs_batch).detach()
             d_batch = self.distance(obs_batch, action_pred)
-
-            # Sample N random transitions for comparison
-            obs_comp_batch, action_comp_batch, reward_comp_batch, _ = self.buffer.get_batch(self.number_of_comparisons)
-            
-            with torch.no_grad():
-                d_comp_batch = self.distance(obs_comp_batch, action_comp_batch)
-            
-            # Compare each in d_batch to each in d_comp_batch and select the rewards of the top K
-            # Using differentiable soft top-k approximation with temperature scaling
-             
-            topk_rewards = []
-            temperature = 10.0  # Higher temperature makes selection sharper
-            
-            for d in d_batch:
-                similarities = torch.cosine_similarity(
-                    d.unsqueeze(0), d_comp_batch, dim=-1)
-                
-                # Use softmax with temperature to create differentiable weights
-                # Higher similarities get higher weights
-                weights = torch.softmax(similarities * temperature, dim=0)
-                
-                # Take weighted average of rewards (differentiable)
-                weighted_reward = torch.sum(weights * reward_comp_batch)
-                topk_rewards.append(weighted_reward)
-
-            topk_rewards = torch.stack(topk_rewards)
-            
-            # Policy loss (maximize distance features)
-            policy_loss = -topk_rewards.mean()
-            self.actor_optimizer.zero_grad()
-            policy_loss.backward()
-            self.actor_optimizer.step()
 
     def train(self):
         steps_collected = 0
@@ -246,27 +154,25 @@ class DistanceAgent:
 
         while steps_collected < self.total_steps:
 
-            torch_obs = torch.tensor(
-                obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-            action = self.actor(torch_obs).detach().cpu().numpy()[0]
+            action = self.get_action(obs)
             noise = np.random.normal(0, 0.1, size=action.shape)
             action = (action + noise).clip(
                 self.env.action_space.low, self.env.action_space.high)
-            
+
             next_obs, reward, done, truncated, _ = self.env.step(action)
 
             self.buffer.add(obs, action, reward, done)
             steps_collected += 1
 
             # Train distance model
-            if steps_collected > self.distance_training_start:             
-                self.train_distance(self.buffer)
+            if steps_collected > self.distance_training_start:
+                self.train_distance()
 
             # Training policy
             if steps_collected > self.policy_training_start:
                 self.train_policy()
-                
-            #evaluate policy every 1000 steps
+
+            # evaluate policy every 1000 steps
             if steps_collected % 100 == 0:
                 print(f'Evaluating at step {steps_collected}...')
                 total_reward = 0.0
@@ -275,17 +181,15 @@ class DistanceAgent:
                     done = False
                     truncated = False
                     while not done and not truncated:
-                        torch_eval_obs = torch.tensor(
-                            eval_obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-                        eval_action = self.actor(torch_eval_obs).detach().cpu().numpy()[0]
-                        eval_obs, eval_reward, done, truncated, _ = self.eval_env.step(eval_action)
+                        eval_action = self.get_action(eval_obs)
+                        eval_obs, eval_reward, done, truncated, _ = self.eval_env.step(
+                            eval_action)
                         total_reward += eval_reward
-                        
+
                 avg_reward = total_reward / self.eval_episodes
-                print(f"Steps: {steps_collected}, Average Eval Reward: {avg_reward}")
+                print(
+                    f"Steps: {steps_collected}, Average Eval Reward: {avg_reward}")
 
             obs = next_obs
             if done or truncated:
                 obs, _ = self.env.reset()
-                
-            

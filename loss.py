@@ -1,113 +1,136 @@
 """
-Reward-aware cosine hinge (contrastive) loss.
+Reward-aware cosine loss with saturating-exponential utility gap mapping.
 
-Pairs with similar rewards are encouraged to have high cosine similarity.
-Pairs with dissimilar rewards are encouraged to have cosine <= margin (repulsion).
+Gap mapping (you set beta):
+    g = |u_i - u_j| >= 0
+    Δ = 1 - exp(-g / beta)  in (0, 1), with Δ(0)=0 and Δ→1 as g→∞
 
-Definition
-----------
-Let
-  c(D1, D2) = <D1, D2> / (||D1|| * ||D2|| + eps)   in [-1, 1]
-  a(v1, v2) = exp(-alpha * |v1 - v2|)              in (0, 1]
+Target cosine (maps Δ ∈ [0,1] to [-1, 1]):
+    t(Δ; γ) = 1 - 2 * Δ^γ
+    - γ = 1.0 is linear; γ > 1 pushes faster toward -1 for moderate gaps.
+    - γ < 1 keeps higher targets for small/mid gaps.
 
-The loss for each pair is:
-  L = a * ReLU(1 - c) + (1 - a) * ReLU(c - margin)
+Loss (regression to target cosine):
+    L = (s - t(Δ; γ))^2
+where s is the cosine similarity between L2-normalized embeddings.
 
-- alpha > 0 controls how quickly affinity decays w.r.t. |v1 - v2|
-- margin <= 0 sets the target for dissimilar pairs (e.g., -0.2)
+This file provides:
+- NumPy utilities for Δ and t
+- PyTorch loss for a batch: all-pairs cosine vs target, excluding the diagonal
 """
 
-from __future__ import annotations
-import argparse
-from dataclasses import dataclass
 from typing import Tuple
+import numpy as np
+
+# --------------------------- PyTorch implementation ---------------------------
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
-
-def reward_affinity(v1: torch.Tensor, v2: torch.Tensor, alpha: float) -> torch.Tensor:
+@torch.no_grad()
+def _pairwise_gaps(u: torch.Tensor) -> torch.Tensor:
     """
-    Compute soft reward affinity a(v1, v2) in (0, 1].
-
-    Parameters
-    ----------
-    v1, v2 : (B,) tensors of scalars
-    alpha  : positive float; larger => faster decay with |v1 - v2|
-
-    Returns
-    -------
-    a : (B,) tensor in (0, 1]
+    Pairwise absolute gaps |u_i - u_j| for u shape (B,).
     """
-    return torch.exp(-alpha * (v1 - v2).abs()).clamp(0.0, 1.0)
+    u = u.view(-1, 1)         # (B,1)
+    return (u - u.T).abs()    # (B,B)
 
-
-def cosine_similarity(
-    D1: torch.Tensor, D2: torch.Tensor, eps: float = 1e-8
-) -> torch.Tensor:
+def target_cosine_torch(delta: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
     """
-    Cosine similarity per pair.
-
-    Parameters
-    ----------
-    D1, D2 : (B, d) tensors
-    eps    : small constant for numerical stability
-
-    Returns
-    -------
-    c : (B,) tensor in [-1, 1]
+    t(Δ; γ) = 1 - 2 * Δ^γ, with Δ ∈ [0,1].
     """
-    D1n = F.normalize(D1, p=2, dim=-1)
-    D2n = F.normalize(D2, p=2, dim=-1)
-    return (D1n * D2n).sum(dim=-1).clamp(-1.0, 1.0)
+    delta = delta.clamp(0.0, 1.0)
+    return 1.0 - 2.0 * (delta ** float(gamma))
 
-
-class RewardAwareCosineHingeLoss(nn.Module):
+def reward_aware_cosine_loss_exp(
+    embeddings: torch.Tensor,
+    utilities: torch.Tensor,
+    beta: float = None,
+    gamma: float = 1.0,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, dict]:
     """
-    Reward-aware cosine hinge (contrastive) loss.
+    Compute the regression-only loss:
+        L = mean_{i != j} ( s_ij - t(Δ_ij; γ) )^2
+    where:
+        s_ij = cosine( z_i, z_j ) with z = L2-normalized embeddings
+        Δ_ij = 1 - exp( -|u_i - u_j| / beta )
 
-    Usage
-    -----
-    loss_fn = RewardAwareCosineHingeLoss(alpha=1.0, margin=-0.2)
-    loss = loss_fn(D1, D2, v1, v2)
+    Args:
+        embeddings: (B, d) unnormalized features from the network
+        utilities:  (B,)   real-valued utility per sample
+        beta:       > 0    scale of the saturating exponential mapping
+        gamma:      > 0    shape of target t(Δ; γ)
+        eps:              small constant for numerical stability
+
+    Returns:
+        loss: scalar torch.Tensor
+        info: dict with optional diagnostics
     """
+    # Normalize embeddings => cosine via dot product
+    z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
+    S = z @ z.T                                       # (B,B) cosine similarities
+    
+    # Pairwise utility gaps and Δ via saturating exponential
+    G = _pairwise_gaps(utilities)                     # (B,B)
 
-    def __init__(self, alpha: float = 1.0, margin: float = -0.2, eps: float = 1e-8):
-        super().__init__()
-        if alpha <= 0:
-            raise ValueError("alpha must be > 0")
-        if margin > 0:
-            raise ValueError("margin should be <= 0 for repulsion of dissimilar pairs")
-        self.alpha = float(alpha)
-        self.margin = float(margin)
-        self.eps = float(eps)
+    if beta is None:
+        # Normalize Delta within the batch #TODO: update?
+        beta = G.max().item()
+        Delta = G / (beta + eps)                     # (B,B)
+        # print(f"Setting beta to max gap: {beta:.4f}")
+    else:
+        exit("Please set beta manually for now!!!")
+            
+    # Target cosine
+    T = target_cosine_torch(Delta, gamma=gamma)       # (B,B)
 
-    def forward(
-        self, D1: torch.Tensor, D2: torch.Tensor, v1: torch.Tensor, v2: torch.Tensor
-    ) -> torch.Tensor:
-        """
-        Parameters
-        ----------
-        D1, D2 : (B, d) embeddings (NN outputs)
-        v1, v2 : (B,) reward scalars corresponding to each embedding
+    # Exclude diagonal (i == j)
+    Bsz = S.size(0)
+    mask = torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device)
+    mask.fill_diagonal_(False)
+    #do not include the upper triangle
+    mask = mask & torch.tril(torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device), diagonal=-1)
 
-        Returns
-        -------
-        loss : scalar tensor
-        """
-        if D1.shape != D2.shape:
-            raise ValueError(f"D1 and D2 must have same shape, got {D1.shape} vs {D2.shape}")
-        if v1.shape != v2.shape or v1.ndim != 1 or v1.shape[0] != D1.shape[0]:
-            raise ValueError("v1 and v2 must be shape (B,) and match batch of D1/D2")
+    diff = (S - T)[mask]
+    loss = (diff ** 2).mean()
 
-        c = cosine_similarity(D1, D2, eps=self.eps)            # (B,)
-        a = reward_affinity(v1, v2, alpha=self.alpha)          # (B,)
+    # print(f"Delta range: min {Delta[mask].min().item():.4f}, max {Delta[mask].max().item():.4f}")
+    # print(f"Cosine range: min {S[mask].min().item():.4f}, max {S[mask].max().item():.4f}")
+    
+    info = {
+        "beta": beta,
+        "gamma": gamma,
+        "mean_gap": G[mask].mean().item(),
+        "median_gap": G[mask].median().item(),
+        "mean_delta": Delta[mask].mean().item(),
+        "median_delta": Delta[mask].median().item(),
+        "mean_cos": S[mask].mean().item(),
+    }
+    return loss , info
 
-        # Positive term: when a≈1, push c→1
-        pos = F.relu(1.0 - c)                                  # (B,)
-        # Negative term: when a≈0, push c≤margin
-        neg = F.relu(c - self.margin)                          # (B,)
+# --------------------------- Minimal usage example ---------------------------
 
-        loss = (a * pos + (1.0 - a) * neg).mean()
-        return loss
+if __name__ == "__main__":
+    torch.manual_seed(0)
+
+    B, d = 4, 32
+    
+    for _ in range(10):
+        embeddings = torch.randn(B, d)              # your model's outputs
+        utilities = torch.randn(B) * 200.0 - 100      # any real-valued utilities
+        print(f"-------------------------------------\n")
+        print(f"utilities range: min {utilities.min().item():.2f}, max {utilities.max().item():.2f}")
+
+        # Choose beta (scale of Δ mapping) and gamma (shape of target)
+        beta = 1.0      # try median(|u_i - u_j|) or set manually
+        gamma = 1.2     # >1 pushes faster toward -1 as Δ grows
+
+        loss, info = reward_aware_cosine_loss_exp(
+            embeddings=embeddings,
+            utilities=utilities,
+            beta=beta,
+            gamma=gamma,
+        )
+        print(f"loss = {loss.item():.6f}")
+        print("diagnostics:", {k: round(v, 4) for k, v in info.items()})
