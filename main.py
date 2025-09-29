@@ -1,4 +1,5 @@
 import argparse
+from time import time
 import wandb
 
 from distRL import DistanceAgent
@@ -10,21 +11,21 @@ def main():
     # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
     parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--device", type=str, default="cpu")    
 
     # wandb args
     parser.add_argument("--lightweight_wandb", action="store_false", default=True,
                         help="If true, wandb will not save the code.")
     parser.add_argument("--exp_prefix", type=str, default="test")
     parser.add_argument("--project_name", type=str, default="DistRL")
-    parser.add_argument("--log_to_wandb", action="store_true", default=False,
+    parser.add_argument("--log_to_wandb", action="store_true", default=True,
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
     parser.add_argument("--algo", type=str, default="DistRL")
-    parser.add_argument("--K", type=int, default=10)
-    parser.add_argument("--total-steps", type=int, default=200_000)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--K", type=int, default=32)
+    parser.add_argument("--total-steps", type=int, default=2_000_000)
+    parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
     parser.add_argument("--buffer-size", type=int, default=100_000)
@@ -34,15 +35,16 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=2)
     parser.add_argument("--policy-training-start", type=int, default=500)
     parser.add_argument("--val-training-start", type=int, default=500)
-    parser.add_argument("--v_gamma", type=float, default=1)
+    parser.add_argument("--v_gamma", type=float, default=1.2)
     args = parser.parse_args()
-
-    exp_prefix = args.exp_prefix + f"{args.algo}-seed{args.seed}"
-    group_name = args.env_id
+    
+    # add time stamp to exp name?
+    exp_prefix = args.exp_prefix + "_" + time.strftime("%Y-%m-%d_%H-%M-%S")
+    group_name = args.env_id + "_test"
 
     if args.log_to_wandb:
         wandb_run = wandb.init(
-            name=args.exp_prefix,
+            name=exp_prefix,
             group=group_name,
             id=exp_prefix,
             project=args.project_name,
@@ -54,6 +56,8 @@ def main():
         if not args.lightweight_wandb:
             # wandb.run.log_code(".")
             wandb_run.log_code("distRL.py")
+            
+        args.wandb_run = wandb_run
     else:
         args.wandb_run = None
 

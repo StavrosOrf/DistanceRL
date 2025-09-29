@@ -116,7 +116,7 @@ class Trajectory_ReplayBuffer(object):
 
         return states, actions, next_states, rewards, dones
 
-    def get_batch(self, batch_size):
+    def get_batch(self, batch_size, seq_length):
         ind = np.random.randint(0, self.size, size=batch_size)
         start = np.random.randint(
             1, self.max_length - 1, size=batch_size)
@@ -139,9 +139,6 @@ class Trajectory_ReplayBuffer(object):
         dones_new = torch.ones_like(dones, device=self.device)
 
         for i in range(batch_size):
-            # print(f'self.max_length-start[i] {self.max_length-start[i]}')
-            # print(f'states[i, start[i]:, :].shape {states[i, start[i]:, :].shape}')
-
             states_new[i, :self.max_length-start[i],
                        :] = states[i, start[i]:, :]
             actions_new[i, :self.max_length-start[i],
@@ -149,9 +146,9 @@ class Trajectory_ReplayBuffer(object):
             rewards_new[i, :self.max_length-start[i]] = rewards[i, start[i]:]
             dones_new[i, :self.max_length-start[i]] = dones[i, start[i]:]
 
-        # print(f'start: {start}')
-        # print(f'dones: {dones}')
-        # print(f'states: {states.shape}')
-        # print(f'dones: {dones.shape}')
-        # input(f'states: {states.shape}')
+        states_new = states_new[:, :seq_length, :]
+        actions_new = actions_new[:, :seq_length, :]
+        rewards_new = rewards_new[:, :seq_length]
+        dones_new = dones_new[:, :seq_length]
+
         return states_new.detach(), actions_new.detach(), rewards_new.detach(), dones_new.detach()

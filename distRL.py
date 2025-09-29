@@ -8,6 +8,7 @@ from typing import Tuple
 from loss import reward_aware_cosine_loss_exp
 import random
 import wandb
+import time
 
 from models import Actor, Distance, ValueNetLSTM, ValueNetTransformer
 from utils import RolloutBuffer, Trajectory_ReplayBuffer
@@ -141,13 +142,15 @@ class DistanceAgent:
     def train_distance(self):
 
         for _ in range(self.update_epochs_policy):
-            obs, actions, rewards, _ = self.buffer.get_batch(self.batch_size)
+            start_time = time.time()
+            obs, actions, rewards, _ = self.buffer.get_batch(self.batch_size,
+                                                             self.K)
 
             embeddings = self.distance(obs, actions)
-            
+
             distance_loss, info = reward_aware_cosine_loss_exp(
                 embeddings=embeddings,
-                utilities=rewards,
+                utilities=rewards.sum(dim=1),  # sum over K steps
                 beta=None,
                 gamma=self.v_gamma,
             )
@@ -163,15 +166,71 @@ class DistanceAgent:
                 self.wandb_run.log(
                     {"train/dist_loss": distance_loss.item(),
                      **{f"train/dist_{k}": v for k, v in info.items()},
-                     "train/dist_grad_norm": grad_norm})
+                     "train/dist_grad_norm": grad_norm,
+                     "train/dist_step_time": time.time() - start_time})
 
     def train_policy(self):
         for _ in range(self.update_epochs_policy):
-            obs_batch, _, _, _ = self.buffer.get_batch(self.batch_size)
-            # Compute distance features
+            start_time = time.time()
+            obs_batch, actions_batch, rewards_batch, _ = self.buffer.get_batch(self.batch_size,
+                                                                               self.K)
 
-            action_pred = self.actor(obs_batch).detach()
-            d_batch = self.distance(obs_batch, action_pred)
+            obs_batch_comp, actions_batch_comp, rewards_batch_comp, _ = self.buffer.get_batch(self.batch_size,
+                                                                                              self.K)
+
+            # print(f'Batch Obs shape: {obs_batch.shape}')
+            # print(f'Batch Action shape: {actions_batch.shape}')
+
+            action_pred = self.actor(obs_batch[:, -1, :])
+            # print(f'Action prediction shape: {action_pred.shape}')
+            # print(f'Action unsqueeze shape: {action_pred.unsqueeze(1).shape}')
+            # print(f'Batch Action shape: {actions_batch[:,:-1,:].shape}')
+            all_actions = torch.cat([actions_batch[:, :-1, :],
+                                     action_pred.unsqueeze(1)], dim=1)
+            # print(f'All actions shape: {all_actions.shape}')
+
+            # Compute distance features
+            d_batch = self.distance(obs_batch, all_actions)
+            # print(f'\n\nDistance shape: {d_batch.shape}')
+
+            with torch.no_grad():
+                d_batch_comp = self.distance(
+                    obs_batch_comp, actions_batch_comp)
+                # print(f'Comparison Distance shape: {d_batch_comp.shape}')
+
+            # calculate cosine similarity matrix
+            d_batch = nn.functional.normalize(d_batch, p=2, dim=1)
+            d_batch_comp = nn.functional.normalize(d_batch_comp, p=2, dim=1)
+            # print(f'Normalized Distance shape: {d_batch.shape}')
+            # print(f'Normalized Comparison Distance shape: {d_batch_comp.shape}')
+            S = (d_batch * d_batch_comp).sum(dim=1,
+                                             keepdim=True)  # cosine similarity
+            # print(f'\n\nCosine similarity shape: {S.shape}')
+            # print(f'Cosine similarity values: {S.squeeze()}')
+
+            rewards_comp = rewards_batch_comp.sum(dim=1)  # sum over K steps
+            # print(f'Comparison rewards shape: {rewards_comp.shape}')
+            # normalize rewards to [0,1]
+            rewards_comp = (rewards_comp - rewards_comp.min()) / \
+                (rewards_comp.max() - rewards_comp.min() + 1e-8)
+            # print(f'reward vector: {rewards_comp}')
+            # print(f'Normalized Comparison rewards shape: {rewards_comp.shape}')
+
+            # Policy loss: maximize cosine similarity weighted by rewards
+            policy_loss = - ((S.squeeze() + 1) * rewards_comp).mean()
+
+            self.actor_optimizer.zero_grad()
+            policy_loss.backward()
+            # calculate the norm of the gradients, dont clip
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                self.actor.parameters(), max_norm=1.0)
+            self.actor_optimizer.step()
+
+            if self.wandb_run is not None:
+                self.wandb_run.log(
+                    {"train/policy_loss": policy_loss.item(),
+                     "train/policy_grad_norm": grad_norm,
+                     "train/policy_step_time": time.time() - start_time})
 
     def evaluate_policy(self):
         total_reward = 0.0
@@ -192,7 +251,7 @@ class DistanceAgent:
 
         avg_reward = total_reward / self.eval_episodes
         print(
-            f" -- [Eval.] Reward over {self.eval_episodes} episodes: {avg_reward:<.2f}, Steps: {np.mean(ep_steps):<.2f}")
+            f"[Eval.] Reward {avg_reward:10.2f}, Steps: {np.mean(ep_steps):6.1f}")  # (Episodes: {self.eval_episodes})")
 
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
@@ -247,7 +306,7 @@ class DistanceAgent:
 
             if done or truncated:
                 print(
-                    f"[Train] Episode done at step {env_step} with reward {reward_traj[:env_step].sum().item():.2f}")
+                    f"[Train: {steps_collected}/{self.total_steps:<5d}] Reward {reward_traj[:env_step].sum().item():10.2f}, Steps: {np.mean(env_step):6.1f}")
 
                 env_step = 0
                 self.buffer.add(

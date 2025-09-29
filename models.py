@@ -74,12 +74,13 @@ class ValueNetLSTM(nn.Module):
             nn.GELU(),
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 1),
+            nn.Linear(hidden_size, hidden_size),
         )
 
     def forward(self, obs_seq: torch.Tensor, act_seq: torch.Tensor) -> torch.Tensor:
         assert obs_seq.shape[1] == self.seq_len and act_seq.shape[1] == self.seq_len, \
             f"expected seq_len={self.seq_len}"
+            
         x = torch.cat([obs_seq, act_seq], dim=-1)  # (B,T,obs+act)
         out, _ = self.lstm(x)                      # (B,T,H)
         last = out[:, -1]                          # (B,H)
@@ -120,7 +121,7 @@ class ValueNetTransformer(nn.Module):
         self.head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.GELU(),
-            nn.Linear(hidden_size, 1),
+            nn.Linear(hidden_size, hidden_size),
         )
 
     def forward(self, obs_seq: torch.Tensor, act_seq: torch.Tensor) -> torch.Tensor:
