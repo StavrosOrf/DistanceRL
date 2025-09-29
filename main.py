@@ -1,5 +1,5 @@
 import argparse
-from time import time
+from datetime import datetime
 import wandb
 
 from distRL import DistanceAgent
@@ -37,9 +37,8 @@ def main():
     parser.add_argument("--val-training-start", type=int, default=500)
     parser.add_argument("--v_gamma", type=float, default=1.2)
     args = parser.parse_args()
-    
-    # add time stamp to exp name?
-    exp_prefix = args.exp_prefix + "_" + time.strftime("%Y-%m-%d_%H-%M-%S")
+        
+    exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     group_name = args.env_id + "_test"
 
     if args.log_to_wandb:

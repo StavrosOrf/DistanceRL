@@ -33,4 +33,4 @@ for envs in ['Pendulum-v1', 'MountainCarContinuous-v0']:
 
                             os.system(command=command)
                             print(command)
-                            # time.sleep(5)
+                            time.sleep(3)
