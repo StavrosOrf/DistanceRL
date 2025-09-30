@@ -47,7 +47,7 @@ class RolloutBuffer:
             self.rewards[idxs].detach(),
             self.dones[idxs].detach(),
         )
-       
+
 
 class Trajectory_ReplayBuffer(object):
     def __init__(self,
@@ -55,7 +55,7 @@ class Trajectory_ReplayBuffer(object):
                  action_dim,
                  max_episode_length,
                  device=None,
-                 max_size=int(1e4)):                
+                 max_size=int(1e4)):
 
         self.max_size = max_size
         self.ptr = 0
@@ -66,14 +66,16 @@ class Trajectory_ReplayBuffer(object):
         self.action = torch.zeros((max_size, max_episode_length, action_dim))
         self.rewards = torch.zeros((max_size, max_episode_length))
         self.dones = torch.zeros((max_size, max_episode_length))
+        self.traj_lengths = np.zeros((max_size,), dtype=int)
 
         self.device = device
 
-    def add(self, state, action, reward, done):
+    def add(self, state, action, reward, done, env_step):
         self.state[self.ptr, :, :] = state
         self.action[self.ptr, :, :] = action
         self.rewards[self.ptr, :] = reward.squeeze()
         self.dones[self.ptr, :] = done.squeeze()
+        self.traj_lengths[self.ptr] = env_step
 
         self.ptr = (self.ptr + 1) % self.max_size
         self.size = min(self.size + 1, self.max_size)
@@ -117,38 +119,47 @@ class Trajectory_ReplayBuffer(object):
         return states, actions, next_states, rewards, dones
 
     def get_batch(self, batch_size, seq_length):
-        ind = np.random.randint(0, self.size, size=batch_size)
-        start = np.random.randint(
-            1, self.max_length - 1, size=batch_size)
-        # 2, self.max_length - 2, size=batch_size)
+        
+        assert seq_length <= self.max_length, f"seq_length {seq_length} exceeds max_length {self.max_length}"
+        
+        ind = np.random.randint(0, self.size-1, size=batch_size)
 
         # Ensure ind, start, and end are integers
         ind = ind.astype(int)
-        start = start.astype(int)
-        # end = end.astype(int)
 
         # Sample states and actions
         states = torch.FloatTensor(self.state[ind, :, :]).to(self.device)
         actions = torch.FloatTensor(self.action[ind, :, :]).to(self.device)
         rewards = torch.FloatTensor(self.rewards[ind, :]).to(self.device)
+        # print(f"States: {states}")
+        # print(f"Rewards: {rewards}")
         dones = torch.FloatTensor(self.dones[ind, :]).to(self.device)
+        traj_lengths = self.traj_lengths[ind]
+        # print(f"traj_lengths: {traj_lengths}")
 
-        states_new = torch.zeros_like(states, device=self.device)
-        actions_new = torch.zeros_like(actions, device=self.device)
-        rewards_new = torch.zeros_like(rewards, device=self.device)
-        dones_new = torch.ones_like(dones, device=self.device)
+        if np.any(traj_lengths <= seq_length):
+            traj_lengths = np.maximum(traj_lengths, seq_length)
+            # print(f'Changed traj_lengths: {traj_lengths}')
 
+        start = np.random.randint(
+            0, traj_lengths - seq_length + 1, size=batch_size)
+
+        start = start.astype(int)
+
+        states_new = torch.zeros(
+            (batch_size, seq_length, states.shape[-1]), device=self.device)
+        actions_new = torch.zeros(
+            (batch_size, seq_length, actions.shape[-1]), device=self.device)
+        rewards_new = torch.zeros((batch_size, seq_length), device=self.device)
+        dones_new = torch.ones((batch_size, seq_length), device=self.device)
+
+        
         for i in range(batch_size):
-            states_new[i, :self.max_length-start[i],
-                       :] = states[i, start[i]:, :]
-            actions_new[i, :self.max_length-start[i],
-                        :] = actions[i, start[i]:, :]
-            rewards_new[i, :self.max_length-start[i]] = rewards[i, start[i]:]
-            dones_new[i, :self.max_length-start[i]] = dones[i, start[i]:]
-
-        states_new = states_new[:, :seq_length, :]
-        actions_new = actions_new[:, :seq_length, :]
-        rewards_new = rewards_new[:, :seq_length]
-        dones_new = dones_new[:, :seq_length]
+            s = start[i]
+            # print(f"i: {i}, traj_length: {traj_lengths[i]}, start: {start[i]}, s: {s}")
+            states_new[i, :, :] = states[i, s:s+seq_length, :]
+            actions_new[i, :, :] = actions[i, s:s+seq_length, :]
+            rewards_new[i, :] = rewards[i, s:s+seq_length]
+            dones_new[i, :] = dones[i, s:s+seq_length]
 
         return states_new.detach(), actions_new.detach(), rewards_new.detach(), dones_new.detach()

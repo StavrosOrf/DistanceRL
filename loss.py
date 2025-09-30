@@ -27,7 +27,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-@torch.no_grad()
+
 def _pairwise_gaps(u: torch.Tensor) -> torch.Tensor:
     """
     Pairwise absolute gaps |u_i - u_j| for u shape (B,).
@@ -35,12 +35,27 @@ def _pairwise_gaps(u: torch.Tensor) -> torch.Tensor:
     u = u.view(-1, 1)         # (B,1)
     return (u - u.T).abs()    # (B,B)
 
+
 def target_cosine_torch(delta: torch.Tensor, gamma: float = 1.0) -> torch.Tensor:
     """
     t(Δ; γ) = 1 - 2 * Δ^γ, with Δ ∈ [0,1].
     """
     delta = delta.clamp(0.0, 1.0)
     return 1.0 - 2.0 * (delta ** float(gamma))
+
+
+def soft_window(x, a, b, eps=1e-2):
+    m = 0.5*(a + b)
+    w = 0.5*(b - a)
+
+    # make torch
+    eps = torch.tensor(eps).to(x.device)
+    m = torch.tensor(m).to(x.device)
+    w = torch.tensor(w).to(x.device)
+
+    k = torch.log((1 - eps) / eps)
+    return 1.0 / (1.0 + torch.exp(-k * ((x - m) / w)))
+
 
 def reward_aware_cosine_loss_exp(
     embeddings: torch.Tensor,
@@ -69,8 +84,9 @@ def reward_aware_cosine_loss_exp(
     """
     # Normalize embeddings => cosine via dot product
     z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
-    S = z @ z.T                                       # (B,B) cosine similarities
-    
+    # (B,B) cosine similarities
+    S = z @ z.T
+
     # Pairwise utility gaps and Δ via saturating exponential
     G = _pairwise_gaps(utilities)                     # (B,B)
 
@@ -80,8 +96,8 @@ def reward_aware_cosine_loss_exp(
         Delta = G / (beta + eps)                     # (B,B)
         # print(f"Setting beta to max gap: {beta:.4f}")
     else:
-        exit("Please set beta manually for now!!!")
-            
+        Delta = soft_window(G, 0.0, beta)       # (B,B)
+
     # Target cosine
     T = target_cosine_torch(Delta, gamma=gamma)       # (B,B)
 
@@ -89,38 +105,40 @@ def reward_aware_cosine_loss_exp(
     Bsz = S.size(0)
     mask = torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device)
     mask.fill_diagonal_(False)
-    #do not include the upper triangle
-    mask = mask & torch.tril(torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device), diagonal=-1)
+    # do not include the upper triangle
+    mask = mask & torch.tril(torch.ones(
+        (Bsz, Bsz), dtype=torch.bool, device=S.device), diagonal=-1)
 
     diff = (S - T)[mask]
     loss = (diff ** 2).mean()
 
     # print(f"Delta range: min {Delta[mask].min().item():.4f}, max {Delta[mask].max().item():.4f}")
     # print(f"Cosine range: min {S[mask].min().item():.4f}, max {S[mask].max().item():.4f}")
-    
+
     info = {
         "beta": beta,
-        "gamma": gamma,
         "mean_gap": G[mask].mean().item(),
-        "median_gap": G[mask].median().item(),
         "mean_delta": Delta[mask].mean().item(),
         "median_delta": Delta[mask].median().item(),
         "mean_cos": S[mask].mean().item(),
     }
-    return loss , info
+    return loss, info
 
 # --------------------------- Minimal usage example ---------------------------
+
 
 if __name__ == "__main__":
     torch.manual_seed(0)
 
     B, d = 4, 32
-    
+
     for _ in range(10):
         embeddings = torch.randn(B, d)              # your model's outputs
-        utilities = torch.randn(B) * 200.0 - 100      # any real-valued utilities
+        # any real-valued utilities
+        utilities = torch.randn(B) * 200.0 - 100
         print(f"-------------------------------------\n")
-        print(f"utilities range: min {utilities.min().item():.2f}, max {utilities.max().item():.2f}")
+        print(
+            f"utilities range: min {utilities.min().item():.2f}, max {utilities.max().item():.2f}")
 
         # Choose beta (scale of Δ mapping) and gamma (shape of target)
         beta = 1.0      # try median(|u_i - u_j|) or set manually

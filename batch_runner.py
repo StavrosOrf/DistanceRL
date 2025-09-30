@@ -20,11 +20,11 @@ if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v2]:
-for envs in ['MountainCarContinuous-v0']:
-    for batch_size in [128]:
-        for K in [2, 32]:  # 512
+for envs in ['LunarLanderContinuous-v2']:
+    for batch_size in [256]:
+        for K in [64]:  # 512
         # for K in [2, 6, 15, 32, 64]:  # 512
-            for v_gamma in [0.8, 1, 1.2]:
+            for v_gamma in [1.1]:
                 for lr in [3e-4]:
                     for hidden_size in [64]:
                         for seed in [42]:

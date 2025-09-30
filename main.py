@@ -19,14 +19,14 @@ def main():
                         help="If true, wandb will not save the code.")
     parser.add_argument("--exp_prefix", type=str, default="test")
     parser.add_argument("--project_name", type=str, default="DistRL")
-    parser.add_argument("--log_to_wandb", action="store_true", default=True,
+    parser.add_argument("--log_to_wandb", action="store_true", default=False,
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
     parser.add_argument("--algo", type=str, default="DistRL")
-    parser.add_argument("--K", type=int, default=32)
+    parser.add_argument("--K", type=int, default=100)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
-    parser.add_argument("--batch-size", type=int, default=128)
+    parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
     parser.add_argument("--buffer-size", type=int, default=100_000)
@@ -36,7 +36,12 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
-    parser.add_argument("--v_gamma", type=float, default=1.2)
+    parser.add_argument("--v_gamma", type=float, default=1.2)    
+    parser.add_argument("--value-model-type", type=str, default="LSTM",
+                        help='"LSTM" or "Transformer"')
+    parser.add_argument("--dynamic-beta", action="store_true", default=False,
+                        help="If true, beta will be set dynamically based on the max reward gap in the batch.")
+    
     args = parser.parse_args()
 
     exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")

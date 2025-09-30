@@ -66,20 +66,21 @@ class ValueNetLSTM(nn.Module):
         self.lstm = nn.LSTM(
             input_size=in_dim,
             hidden_size=hidden_size,
-            num_layers=1,
+            num_layers=2,
             batch_first=True
         )
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
-            nn.GELU(),
+            nn.SiLU(),
             nn.Linear(hidden_size, hidden_size),
-            nn.GELU(),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
             nn.Linear(hidden_size, hidden_size),
         )
 
     def forward(self, obs_seq: torch.Tensor, act_seq: torch.Tensor) -> torch.Tensor:
-        assert obs_seq.shape[1] == self.seq_len and act_seq.shape[1] == self.seq_len, \
-            f"expected seq_len={self.seq_len}"
+        # assert obs_seq.shape[1] == self.seq_len and act_seq.shape[1] == self.seq_len, \
+        #     f"expected seq_len={self.seq_len}"
             
         x = torch.cat([obs_seq, act_seq], dim=-1)  # (B,T,obs+act)
         out, _ = self.lstm(x)                      # (B,T,H)

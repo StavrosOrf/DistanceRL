@@ -40,6 +40,7 @@ class DistanceAgent:
         wandb_run=None,
         eval_episodes=5,
         v_gamma=1.0,
+        dynamic_beta=False,
         value_model_type="LSTM",  # "LSTM" or "Transformer"
         **kwargs,
     ):
@@ -132,6 +133,19 @@ class DistanceAgent:
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
+                
+        if not dynamic_beta:
+            if env_id == "LunarLanderContinuous-v2":
+                self.beta = 700.0
+            elif env_id == "Pendulum-v1":
+                self.beta = 0.1
+            elif env_id == "MountainCarContinuous-v0":
+                self.beta = 0.1
+            else:
+                assert False, "Please set beta manually for this env!!!"                
+        else:
+            self.beta = None  # will be set dynamically during training
+        print(f'Setting beta to: {self.beta}')
 
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         obs_tensor = torch.tensor(
@@ -151,7 +165,7 @@ class DistanceAgent:
             distance_loss, info = reward_aware_cosine_loss_exp(
                 embeddings=embeddings,
                 utilities=rewards.sum(dim=1),  # sum over K steps
-                beta=None,
+                beta=self.beta,
                 gamma=self.v_gamma,
             )
 
@@ -159,7 +173,7 @@ class DistanceAgent:
             distance_loss.backward()
             # calculate the norm of the gradients, dont clip
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.distance.parameters(), max_norm=1.0)
+                self.distance.parameters(), max_norm=1.0)            
             self.distance_optimizer.step()
 
             if self.wandb_run is not None:
@@ -191,7 +205,9 @@ class DistanceAgent:
             # print(f'All actions shape: {all_actions.shape}')
 
             # Compute distance features
-            d_batch = self.distance(obs_batch, all_actions)
+            # d_batch = self.distance(obs_batch, all_actions)
+            #single step
+            d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
             # print(f'\n\nDistance shape: {d_batch.shape}')
 
             with torch.no_grad():
@@ -257,7 +273,7 @@ class DistanceAgent:
 
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
-                                "eval/avg_ep_length": np.mean(ep_steps)}, 
+                                "eval/avg_ep_length": np.mean(ep_steps)},
                                step=self.steps_collected)
         return avg_reward
 
@@ -310,19 +326,18 @@ class DistanceAgent:
             if done or truncated:
                 print(
                     f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {reward_traj[:env_step].sum().item():10.2f}, Steps: {np.mean(env_step):6.1f}")
-                
+
                 if self.wandb_run is not None:
                     self.wandb_run.log(
                         {"rollout/ep_reward": reward_traj[:env_step].sum().item(),
-                         "rollout/ep_length": env_step,
-                         "rollout/total_env_steps": self.steps_collected},
+                         "rollout/ep_length": env_step},
                         step=self.steps_collected)
 
-                env_step = 0
                 self.buffer.add(
-                    state_traj, action_traj, reward_traj, done_traj
+                    state_traj, action_traj, reward_traj, done_traj, env_step
                 )
 
+                env_step = 0
                 obs, _ = self.env.reset()
                 action_traj = torch.zeros(
                     (self.max_episode_steps, self.act_dim)).to(self.device)
