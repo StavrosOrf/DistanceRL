@@ -91,7 +91,7 @@ def reward_aware_cosine_loss_exp(
     G = _pairwise_gaps(utilities)                     # (B,B)
 
     if beta is None:
-        # Normalize Delta within the batch #TODO: update?
+        # Normalize Delta within the batch
         beta = G.max().item()
         Delta = G / (beta + eps)                     # (B,B)
         # print(f"Setting beta to max gap: {beta:.4f}")
