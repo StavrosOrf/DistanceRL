@@ -24,7 +24,7 @@ def main():
 
     # algorithm args
     parser.add_argument("--algo", type=str, default="DistRL")
-    parser.add_argument("--K", type=int, default=100)
+    parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
@@ -59,8 +59,8 @@ def main():
         )
 
         if not args.lightweight_wandb:
-            # wandb.run.log_code(".")
-            wandb_run.log_code("distRL.py")
+            wandb.run.log_code(".")
+            # wandb_run.log_code("distRL.py")
 
         args.wandb_run = wandb_run
     else:

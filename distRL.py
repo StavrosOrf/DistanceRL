@@ -4,14 +4,15 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from typing import Tuple
+import copy
 
 from loss import reward_aware_cosine_loss_exp
 import random
 import wandb
 import time
 
-from models import Actor, Distance, ValueNetLSTM, ValueNetTransformer
-from utils import RolloutBuffer, Trajectory_ReplayBuffer
+from models import Actor, ValueNetLSTM, ValueNetTransformer
+from utils import Trajectory_ReplayBuffer
 
 
 def set_seed(seed: int):
@@ -58,7 +59,6 @@ class DistanceAgent:
         else:
             raise Warning(
                 "Max episode steps not found!!!!, using default: 1000")
-            self.max_episode_steps = 1000
 
         self.obs_dim = int(np.prod(self.env.observation_space.shape))
         self.act_dim = int(np.prod(self.env.action_space.shape))
@@ -109,9 +109,11 @@ class DistanceAgent:
                 seq_len=K,
             ).to(self.device)
 
-        self.actor_optimizer = optim.AdamW(self.actor.parameters(), lr=lr)
-        self.distance_optimizer = optim.AdamW(
-            self.distance.parameters(), lr=lr)
+        # self.actor_target = copy.deepcopy(self.actor)
+        self.distance_target = copy.deepcopy(self.distance)
+
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
+        self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr)
 
         self.buffer = Trajectory_ReplayBuffer(
             self.obs_dim,
@@ -130,10 +132,14 @@ class DistanceAgent:
         self.policy_training_start = policy_training_start
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
+        self.tau = 0.005
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
-                
+
+        if self.wandb_run is not None:
+            wandb.run.log_code(".")
+
         if not dynamic_beta:
             if env_id == "LunarLanderContinuous-v2":
                 self.beta = 700.0
@@ -142,7 +148,7 @@ class DistanceAgent:
             elif env_id == "MountainCarContinuous-v0":
                 self.beta = 0.1
             else:
-                assert False, "Please set beta manually for this env!!!"                
+                assert False, "Please set beta manually for this env!!!"
         else:
             self.beta = None  # will be set dynamically during training
         print(f'Setting beta to: {self.beta}')
@@ -173,7 +179,7 @@ class DistanceAgent:
             distance_loss.backward()
             # calculate the norm of the gradients, dont clip
             grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.distance.parameters(), max_norm=1.0)            
+                self.distance.parameters(), max_norm=1.0)
             self.distance_optimizer.step()
 
             if self.wandb_run is not None:
@@ -205,13 +211,13 @@ class DistanceAgent:
             # print(f'All actions shape: {all_actions.shape}')
 
             # Compute distance features
-            d_batch = self.distance(obs_batch, all_actions)
-            #single step
+            d_batch = self.distance_target(obs_batch, all_actions)
+            # single step
             # d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
             # print(f'\n\nDistance shape: {d_batch.shape}')
 
             with torch.no_grad():
-                d_batch_comp = self.distance(
+                d_batch_comp = self.distance_target(
                     obs_batch_comp, actions_batch_comp)
                 # print(f'Comparison Distance shape: {d_batch_comp.shape}')
 
@@ -223,8 +229,8 @@ class DistanceAgent:
             # S = (d_batch * d_batch_comp).sum(dim=1,
             #                                  keepdim=True)  # cosine similarity
 
-            # calculate cosine similarity matrix between all pairs in the batch            
-            S_all = torch.matmul(d_batch, d_batch_comp.T)  # (B, B)            
+            # calculate cosine similarity matrix between all pairs in the batch
+            S_all = torch.matmul(d_batch, d_batch_comp.T)  # (B, B)
 
             # print(f'Cosine similarity matrix shape: {S_all.shape}')
             # print(f'Cosine similarity matrix values: {S_all}')
@@ -237,40 +243,42 @@ class DistanceAgent:
             # normalize rewards to [0,1]
             # rewards_comp = (rewards_comp - rewards_comp.min()) / \
             #     (rewards_comp.max() - rewards_comp.min() + 1e-8)
-            
+
             # max_reward = 400
             # rewards_comp = (rewards_comp - rewards_comp.min()) / (rewards_comp.max() - rewards_comp.min() + 1e-8)
 
             # print(f'reward vector: {rewards_comp}')
             # print(f'Normalized Comparison rewards shape: {rewards_comp.shape}')
-            
+
             # mask low rewards
             # rewards_comp = torch.where(rewards_comp < 0.5, torch.zeros_like(rewards_comp), rewards_comp)
-            
+
             # print(f'reward vector: {rewards_comp}')
-            
+
             # Apply logarithmic weighting: w_i = (log(μ + 0.5) - log(i)) / Σ(log(μ + 0.5) - log(j))
-            sorted_indices = torch.argsort(torch.argsort(rewards_comp, descending=True))
+            sorted_indices = torch.argsort(
+                torch.argsort(rewards_comp, descending=True))
             mu = len(rewards_comp)  # μ is the batch size
             i = sorted_indices.float() + 1  # 1-indexed ranks
-            
+
             # # Calculate logarithmic weights
             numerator = torch.log(torch.tensor(mu + 0.5)) - torch.log(i)
             # # Calculate denominator as sum over all j from 1 to μ
             j_values = torch.arange(1, mu + 1, dtype=torch.float32)
-            denominator = torch.sum(torch.log(torch.tensor(mu + 0.5)) - torch.log(j_values))
+            denominator = torch.sum(
+                torch.log(torch.tensor(mu + 0.5)) - torch.log(j_values))
             rewards_comp = numerator / denominator
             # rewards_comp = 1 - rewards_comp  # invert weights so higher rewards get higher weights
             # print(f'reward: {rewards_comp}')
-            
+
             # print(f'Logarithmic weighted reward vector: {rewards_comp}')
             rewards_comp = rewards_comp.unsqueeze(1).repeat(1, S_all.size(1))
             # print(f'reward: {rewards_comp}')
 
             # Policy loss: maximize cosine similarity weighted by rewards
-            policy_loss = - ((S_all + torch.ones_like(S_all)) * rewards_comp.T).mean()
+            policy_loss = - ((S_all + torch.ones_like(S_all))
+                             * rewards_comp.T).mean()
             # print(f'Policy loss: {policy_loss.item()}\n')
-            
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -285,6 +293,11 @@ class DistanceAgent:
                      "train/policy_grad_norm": grad_norm,
                      "time/policy_step_time": time.time() - start_time},
                     step=self.steps_collected)
+                
+        # Update the frozen target models
+        for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
+            target_param.data.copy_(
+                self.tau * param.data + (1 - self.tau) * target_param.data)
 
     def evaluate_policy(self):
         total_reward = 0.0

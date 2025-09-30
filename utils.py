@@ -131,19 +131,19 @@ class Trajectory_ReplayBuffer(object):
         states = torch.FloatTensor(self.state[ind, :, :]).to(self.device)
         actions = torch.FloatTensor(self.action[ind, :, :]).to(self.device)
         rewards = torch.FloatTensor(self.rewards[ind, :]).to(self.device)
-        # print(f"States: {states}")
-        # print(f"Rewards: {rewards}")
+
         dones = torch.FloatTensor(self.dones[ind, :]).to(self.device)
         traj_lengths = self.traj_lengths[ind]
         # print(f"traj_lengths: {traj_lengths}")
 
         if np.any(traj_lengths <= seq_length):
             traj_lengths = np.maximum(traj_lengths, seq_length)
-            # print(f'Changed traj_lengths: {traj_lengths}')
+            # print(f'Changed traj_lengths: {traj_lengths}')            
+            print(f'!!! It is recommended to use seq_length smaller than the minimum traj_length in the buffer.')
 
         start = np.random.randint(
-            0, traj_lengths - seq_length + 1, size=batch_size)
-
+            0, traj_lengths - seq_length, size=batch_size)                
+        
         start = start.astype(int)
 
         states_new = torch.zeros(
@@ -152,11 +152,10 @@ class Trajectory_ReplayBuffer(object):
             (batch_size, seq_length, actions.shape[-1]), device=self.device)
         rewards_new = torch.zeros((batch_size, seq_length), device=self.device)
         dones_new = torch.ones((batch_size, seq_length), device=self.device)
-
+        
         
         for i in range(batch_size):
-            s = start[i]
-            # print(f"i: {i}, traj_length: {traj_lengths[i]}, start: {start[i]}, s: {s}")
+            s = start[i]                        
             states_new[i, :, :] = states[i, s:s+seq_length, :]
             actions_new[i, :, :] = actions[i, s:s+seq_length, :]
             rewards_new[i, :] = rewards[i, s:s+seq_length]

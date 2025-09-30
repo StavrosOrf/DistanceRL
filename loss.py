@@ -119,7 +119,6 @@ def reward_aware_cosine_loss_exp(
         "beta": beta,
         "mean_gap": G[mask].mean().item(),
         "mean_delta": Delta[mask].mean().item(),
-        "median_delta": Delta[mask].median().item(),
         "mean_cos": S[mask].mean().item(),
     }
     return loss, info
