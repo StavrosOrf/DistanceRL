@@ -167,7 +167,8 @@ class DistanceAgent:
                     {"train/dist_loss": distance_loss.item(),
                      **{f"train/dist_{k}": v for k, v in info.items()},
                      "train/dist_grad_norm": grad_norm,
-                     "train/dist_step_time": time.time() - start_time})
+                     "time/dist_step_time": time.time() - start_time},
+                    step=self.steps_collected)
 
     def train_policy(self):
         for _ in range(self.update_epochs_policy):
@@ -230,7 +231,8 @@ class DistanceAgent:
                 self.wandb_run.log(
                     {"train/policy_loss": policy_loss.item(),
                      "train/policy_grad_norm": grad_norm,
-                     "train/policy_step_time": time.time() - start_time})
+                     "time/policy_step_time": time.time() - start_time},
+                    step=self.steps_collected)
 
     def evaluate_policy(self):
         total_reward = 0.0
@@ -255,11 +257,12 @@ class DistanceAgent:
 
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
-                                "eval/avg_ep_length": np.mean(ep_steps)})
+                                "eval/avg_ep_length": np.mean(ep_steps)}, 
+                               step=self.steps_collected)
         return avg_reward
 
     def train(self):
-        steps_collected = 0
+        self.steps_collected = 0
         env_step = 0
 
         obs, _ = self.env.reset()
@@ -273,7 +276,7 @@ class DistanceAgent:
 
         self.evaluate_policy()
 
-        while steps_collected < self.total_steps:
+        while self.steps_collected < self.total_steps:
 
             action = self.get_action(obs)
             noise = np.random.normal(0, 0.1, size=action.shape)
@@ -291,22 +294,29 @@ class DistanceAgent:
             reward_traj[env_step] = torch.tensor(
                 reward, dtype=torch.float32, device=self.device)
 
-            steps_collected += 1
+            self.steps_collected += 1
             env_step += 1
 
             # Train distance model
-            if steps_collected > self.val_training_start:
+            if self.steps_collected > self.val_training_start:
                 self.train_distance()
 
             # Training policy
-            if steps_collected > self.policy_training_start:
+            if self.steps_collected > self.policy_training_start:
                 self.train_policy()
 
             obs = next_obs
 
             if done or truncated:
                 print(
-                    f"[Train: {steps_collected}/{self.total_steps:<5d}] Reward {reward_traj[:env_step].sum().item():10.2f}, Steps: {np.mean(env_step):6.1f}")
+                    f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {reward_traj[:env_step].sum().item():10.2f}, Steps: {np.mean(env_step):6.1f}")
+                
+                if self.wandb_run is not None:
+                    self.wandb_run.log(
+                        {"rollout/ep_reward": reward_traj[:env_step].sum().item(),
+                         "rollout/ep_length": env_step,
+                         "rollout/total_env_steps": self.steps_collected},
+                        step=self.steps_collected)
 
                 env_step = 0
                 self.buffer.add(

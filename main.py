@@ -9,7 +9,8 @@ def main():
     parser = argparse.ArgumentParser()
 
     # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
-    parser.add_argument("--env-id", type=str, default="Pendulum-v1")
+    parser.add_argument("--env-id", type=str, default="LunarLanderContinuous-v2")
+    # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
@@ -32,7 +33,7 @@ def main():
     # parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--hidden-size", type=int, default=64)
-    parser.add_argument("--eval-episodes", type=int, default=2)
+    parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
     parser.add_argument("--v_gamma", type=float, default=1.2)
