@@ -121,7 +121,7 @@ class Trajectory_ReplayBuffer(object):
     def get_batch(self, batch_size, seq_length):
         
         assert seq_length <= self.max_length, f"seq_length {seq_length} exceeds max_length {self.max_length}"
-        
+                
         ind = np.random.randint(0, self.size-1, size=batch_size)
 
         # Ensure ind, start, and end are integers

@@ -205,9 +205,9 @@ class DistanceAgent:
             # print(f'All actions shape: {all_actions.shape}')
 
             # Compute distance features
-            # d_batch = self.distance(obs_batch, all_actions)
+            d_batch = self.distance(obs_batch, all_actions)
             #single step
-            d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
+            # d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
             # print(f'\n\nDistance shape: {d_batch.shape}')
 
             with torch.no_grad():
@@ -220,21 +220,57 @@ class DistanceAgent:
             d_batch_comp = nn.functional.normalize(d_batch_comp, p=2, dim=1)
             # print(f'Normalized Distance shape: {d_batch.shape}')
             # print(f'Normalized Comparison Distance shape: {d_batch_comp.shape}')
-            S = (d_batch * d_batch_comp).sum(dim=1,
-                                             keepdim=True)  # cosine similarity
+            # S = (d_batch * d_batch_comp).sum(dim=1,
+            #                                  keepdim=True)  # cosine similarity
+
+            # calculate cosine similarity matrix between all pairs in the batch            
+            S_all = torch.matmul(d_batch, d_batch_comp.T)  # (B, B)            
+
+            # print(f'Cosine similarity matrix shape: {S_all.shape}')
+            # print(f'Cosine similarity matrix values: {S_all}')
+
             # print(f'\n\nCosine similarity shape: {S.shape}')
             # print(f'Cosine similarity values: {S.squeeze()}')
 
             rewards_comp = rewards_batch_comp.sum(dim=1)  # sum over K steps
             # print(f'Comparison rewards shape: {rewards_comp.shape}')
             # normalize rewards to [0,1]
-            rewards_comp = (rewards_comp - rewards_comp.min()) / \
-                (rewards_comp.max() - rewards_comp.min() + 1e-8)
+            # rewards_comp = (rewards_comp - rewards_comp.min()) / \
+            #     (rewards_comp.max() - rewards_comp.min() + 1e-8)
+            
+            # max_reward = 400
+            # rewards_comp = (rewards_comp - rewards_comp.min()) / (rewards_comp.max() - rewards_comp.min() + 1e-8)
+
             # print(f'reward vector: {rewards_comp}')
             # print(f'Normalized Comparison rewards shape: {rewards_comp.shape}')
+            
+            # mask low rewards
+            # rewards_comp = torch.where(rewards_comp < 0.5, torch.zeros_like(rewards_comp), rewards_comp)
+            
+            # print(f'reward vector: {rewards_comp}')
+            
+            # Apply logarithmic weighting: w_i = (log(μ + 0.5) - log(i)) / Σ(log(μ + 0.5) - log(j))
+            sorted_indices = torch.argsort(torch.argsort(rewards_comp, descending=True))
+            mu = len(rewards_comp)  # μ is the batch size
+            i = sorted_indices.float() + 1  # 1-indexed ranks
+            
+            # # Calculate logarithmic weights
+            numerator = torch.log(torch.tensor(mu + 0.5)) - torch.log(i)
+            # # Calculate denominator as sum over all j from 1 to μ
+            j_values = torch.arange(1, mu + 1, dtype=torch.float32)
+            denominator = torch.sum(torch.log(torch.tensor(mu + 0.5)) - torch.log(j_values))
+            rewards_comp = numerator / denominator
+            # rewards_comp = 1 - rewards_comp  # invert weights so higher rewards get higher weights
+            # print(f'reward: {rewards_comp}')
+            
+            # print(f'Logarithmic weighted reward vector: {rewards_comp}')
+            rewards_comp = rewards_comp.unsqueeze(1).repeat(1, S_all.size(1))
+            # print(f'reward: {rewards_comp}')
 
             # Policy loss: maximize cosine similarity weighted by rewards
-            policy_loss = - ((S.squeeze() + 1) * rewards_comp).mean()
+            policy_loss = - ((S_all + torch.ones_like(S_all)) * rewards_comp.T).mean()
+            # print(f'Policy loss: {policy_loss.item()}\n')
+            
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()

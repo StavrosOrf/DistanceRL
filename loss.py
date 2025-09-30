@@ -85,7 +85,7 @@ def reward_aware_cosine_loss_exp(
     # Normalize embeddings => cosine via dot product
     z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
     # (B,B) cosine similarities
-    S = z @ z.T
+    S = z @ z.T   
 
     # Pairwise utility gaps and Δ via saturating exponential
     G = _pairwise_gaps(utilities)                     # (B,B)
