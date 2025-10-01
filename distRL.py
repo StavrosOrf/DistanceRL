@@ -110,7 +110,7 @@ class DistanceAgent:
             ).to(self.device)
 
         # self.actor_target = copy.deepcopy(self.actor)
-        self.distance_target = copy.deepcopy(self.distance)
+        # self.distance_target = copy.deepcopy(self.distance)
 
         self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
         self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr)
@@ -211,13 +211,13 @@ class DistanceAgent:
             # print(f'All actions shape: {all_actions.shape}')
 
             # Compute distance features
-            d_batch = self.distance_target(obs_batch, all_actions)
+            d_batch = self.distance(obs_batch, all_actions)
             # single step
             # d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
             # print(f'\n\nDistance shape: {d_batch.shape}')
 
             with torch.no_grad():
-                d_batch_comp = self.distance_target(
+                d_batch_comp = self.distance(
                     obs_batch_comp, actions_batch_comp)
                 # print(f'Comparison Distance shape: {d_batch_comp.shape}')
 
@@ -295,9 +295,9 @@ class DistanceAgent:
                     step=self.steps_collected)
                 
         # Update the frozen target models
-        for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
-            target_param.data.copy_(
-                self.tau * param.data + (1 - self.tau) * target_param.data)
+        # for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
+        #     target_param.data.copy_(
+        #         self.tau * param.data + (1 - self.tau) * target_param.data)
 
     def evaluate_policy(self):
         total_reward = 0.0
