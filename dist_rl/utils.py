@@ -4,9 +4,11 @@ from typing import Tuple
 
 
 class RolloutBuffer:
-    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, hidden_size_dim: int, device):
+    def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device):
         self.obs = torch.zeros((buffer_size, obs_dim),
                                dtype=torch.float32, device=device)
+        self.next_obs = torch.zeros(
+            (buffer_size, obs_dim), dtype=torch.float32, device=device)
         self.actions = torch.zeros(
             (buffer_size, act_dim), dtype=torch.float32, device=device)
         self.rewards = torch.zeros(
@@ -18,7 +20,7 @@ class RolloutBuffer:
         self.max_size = buffer_size
         self.device = device
 
-    def add(self, obs, action, reward, done):
+    def add(self, obs, next_obs, action, reward, done):
         self.ptr += 1
         self.entry_count += 1
         if self.ptr >= self.max_size:
@@ -26,6 +28,8 @@ class RolloutBuffer:
 
         self.obs[self.ptr] = torch.tensor(
             obs, dtype=torch.float32, device=self.device)
+        self.next_obs[self.ptr] = torch.tensor(
+            next_obs, dtype=torch.float32, device=self.device)
         self.actions[self.ptr] = torch.tensor(
             action, dtype=torch.float32, device=self.device)
         self.rewards[self.ptr] = torch.tensor(
@@ -43,6 +47,7 @@ class RolloutBuffer:
 
         return (
             self.obs[idxs].detach(),
+            self.next_obs[idxs].detach(),
             self.actions[idxs].detach(),
             self.rewards[idxs].detach(),
             self.dones[idxs].detach(),

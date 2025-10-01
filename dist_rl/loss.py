@@ -85,7 +85,7 @@ def reward_aware_cosine_loss_exp(
     # Normalize embeddings => cosine via dot product
     z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
     # (B,B) cosine similarities
-    S = z @ z.T   
+    S = z @ z.T
 
     # Pairwise utility gaps and Δ via saturating exponential
     G = _pairwise_gaps(utilities)                     # (B,B)
@@ -110,6 +110,66 @@ def reward_aware_cosine_loss_exp(
         (Bsz, Bsz), dtype=torch.bool, device=S.device), diagonal=-1)
 
     diff = (S - T)[mask]
+    loss = (diff ** 2).mean()
+
+    # print(f"Delta range: min {Delta[mask].min().item():.4f}, max {Delta[mask].max().item():.4f}")
+    # print(f"Cosine range: min {S[mask].min().item():.4f}, max {S[mask].max().item():.4f}")
+
+    info = {
+        "beta": beta,
+        "mean_gap": G[mask].mean().item(),
+        "mean_delta": Delta[mask].mean().item(),
+        "mean_cos": S[mask].mean().item(),
+    }
+    return loss, info
+
+
+def recursive_reward_aware_cosine_loss(
+    embeddings: torch.Tensor,
+    next_embeddings: torch.Tensor,
+    dones: torch.Tensor,
+    rewards: torch.Tensor,
+    beta: float = None,
+    gamma: float = 1.0,
+    discount: float = 0.99,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, dict]:
+
+    # Normalize embeddings => cosine via dot product
+    z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
+    z_next = F.normalize(next_embeddings, p=2, dim=1, eps=eps)  # (B,d)
+    # (B,B) cosine similarities
+    S = z @ z.T
+
+    # (B,B) cosine similarities
+    S_next = z_next @ z_next.T
+    # Pairwise utility gaps and Δ via saturating exponential
+    G = _pairwise_gaps(rewards)                     # (B,B)
+
+    # print(
+    #     f'G.shape: {G.shape}, S.shape: {S.shape}, S_next.shape: {S_next.shape}, dones.shape: {dones.shape}')
+
+    if beta is None:
+        # Normalize Delta within the batch
+        beta = G.max().item()
+        Delta = G / (beta + eps)                     # (B,B)
+        # print(f"Setting beta to max gap: {beta:.4f}")
+    else:
+        Delta = soft_window(G, 0.0, beta)       # (B,B)
+
+    # Target cosine
+    T = target_cosine_torch(Delta, gamma=gamma)       # (B,B)
+
+    targets = (T + discount * (1 - dones) * S_next)/ (2 - dones)
+
+    Bsz = S.size(0)
+    # create a mask to exclude diagonal
+    mask = torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device)
+    mask.fill_diagonal_(False)
+
+    # print(f'mask.shape: {mask.shape}, mask: {mask}')
+
+    diff = (S - targets)[mask]
     loss = (diff ** 2).mean()
 
     # print(f"Delta range: min {Delta[mask].min().item():.4f}, max {Delta[mask].max().item():.4f}")

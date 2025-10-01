@@ -7,6 +7,7 @@ import yaml
 import torch
 
 from dist_rl.distRL import DistanceAgent
+from dist_rl.recursive_distRL import RecDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 
 
@@ -30,7 +31,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistRL")
+    parser.add_argument("--algo", type=str, default="RecDistRL")
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -39,26 +40,24 @@ def main():
     parser.add_argument("--buffer-size", type=int, default=100_000)
     # parser.add_argument("--max-grad-norm", type=float, default=0.5)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--hidden-size", type=int, default=64)
-    parser.add_argument("--eval-episodes", type=int, default=10)
-    parser.add_argument("--policy-training-start", type=int, default=2000)
-    parser.add_argument("--val-training-start", type=int, default=2000)
-    parser.add_argument("--v_gamma", type=float, default=1.2)
+    parser.add_argument("--hidden-size", type=int, default=16)
+    parser.add_argument("--eval-episodes", type=int, default=2)
+    parser.add_argument("--policy-training-start", type=int, default=1000)
+    parser.add_argument("--val-training-start", type=int, default=1000)
+    parser.add_argument("--v_gamma", type=float, default=1)
     parser.add_argument("--value-model-type", type=str, default="LSTM",
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,
                         help="If true, beta will be set dynamically based on the max reward gap in the batch.")
 
     args = parser.parse_args()
-    
-    
-    
-    #check if cuda is available
+
+    # check if cuda is available
     if args.device == "cuda" and not torch.cuda.is_available():
         print("CUDA is not available, switching to CPU.")
         args.device = "cpu"
 
-    if args.algo not in ["DistRL"]:
+    if args.algo in ["ppo", "td3", "sac"]:
         group_name = args.group_name + args.env_id + "_SB3"
         # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
@@ -67,14 +66,13 @@ def main():
     else:
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         group_name = args.group_name + args.env_id + "_test"
-        
-        
 
     if args.log_to_wandb:
         wandb_run = wandb.init(
             name=exp_prefix,
             group=group_name,
-            sync_tensorboard=True if args.algo in ["ppo", "td3", "sac"] else False,
+            sync_tensorboard=True if args.algo in [
+                "ppo", "td3", "sac"] else False,
             id=exp_prefix,
             project=args.project_name,
             entity='stavrosorf',
@@ -92,9 +90,13 @@ def main():
 
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
-        agent.train()
+    elif args.algo == "RecDistRL":
+        agent = RecDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
+
+    if args.algo not in ["ppo", "td3", "sac"]:
+        agent.train()
 
 
 if __name__ == "__main__":
