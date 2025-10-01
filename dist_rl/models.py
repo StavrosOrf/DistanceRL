@@ -1,4 +1,5 @@
 from typing import Tuple
+
 import torch
 import torch.nn as nn
 
@@ -26,6 +27,54 @@ class Actor(nn.Module):
         Returns: action, log_prob, value, mean_action (deterministic)
         """
         return self.actor(obs) * self.max_action
+
+
+class StateEncoder(nn.Module):
+    """Encode observations into a latent reward-predictive embedding."""
+
+    def __init__(self, obs_dim: int, hidden_size: int = 128, embed_dim: int = 64):
+        super().__init__()
+        self.encoder = nn.Sequential(
+            nn.Linear(obs_dim, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.SiLU(),
+            nn.Linear(hidden_size, embed_dim),
+        )
+
+    def forward(self, obs: torch.Tensor) -> torch.Tensor:
+        return self.encoder(obs)
+
+
+class Critic(nn.Module):
+    """Twin Q-network critic used by SGPO."""
+
+    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 256):
+        super().__init__()
+
+        def build_head():
+            return nn.Sequential(
+                nn.Linear(obs_dim + act_dim, hidden_size),
+                nn.LayerNorm(hidden_size),
+                nn.SiLU(),
+                nn.Linear(hidden_size, hidden_size),
+                nn.LayerNorm(hidden_size),
+                nn.SiLU(),
+                nn.Linear(hidden_size, 1),
+            )
+
+        self.q1 = build_head()
+        self.q2 = build_head()
+
+    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        x = torch.cat([obs, actions], dim=-1)
+        return self.q1(x), self.q2(x)
+
+    def q1_only(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        x = torch.cat([obs, actions], dim=-1)
+        return self.q1(x)
 
 
 class Distance(nn.Module):

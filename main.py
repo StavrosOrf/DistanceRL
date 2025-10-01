@@ -8,6 +8,7 @@ import torch
 
 from dist_rl.distRL import DistanceAgent
 from dist_rl.recursive_distRL import RecDistanceAgent
+from dist_rl.sgpo import SGPOAgent
 from classic_rl.sb3_train import train_sb3_agent
 
 
@@ -49,6 +50,14 @@ def main():
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,
                         help="If true, beta will be set dynamically based on the max reward gap in the batch.")
+    parser.add_argument("--sgpo-archive-size", type=int, default=2048)
+    parser.add_argument("--sgpo-kernel-tau", type=float, default=0.5)
+    parser.add_argument("--sgpo-quality-beta", type=float, default=2.0)
+    parser.add_argument("--sgpo-lambda", type=float, default=0.1)
+    parser.add_argument("--sgpo-embed-dim", type=int, default=64)
+    parser.add_argument("--policy-noise", type=float, default=0.2)
+    parser.add_argument("--policy-noise-clip", type=float, default=0.5)
+    parser.add_argument("--actor-update-frequency", type=int, default=1)
 
     args = parser.parse_args()
 
@@ -92,6 +101,8 @@ def main():
         agent = DistanceAgent(**args.__dict__)
     elif args.algo == "RecDistRL":
         agent = RecDistanceAgent(**args.__dict__)
+    elif args.algo == "SGPO":
+        agent = SGPOAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 
