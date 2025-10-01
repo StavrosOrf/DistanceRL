@@ -116,7 +116,6 @@ class SGPOAgent:
         self,
         env_id,
         seed,
-        K=5,
         total_steps=20_000,
         buffer_size=10**5,
         update_epochs_policy=1,
@@ -130,8 +129,6 @@ class SGPOAgent:
         wandb_run=None,
         eval_episodes=5,
         v_gamma=0.99,
-        dynamic_beta=False,
-        value_model_type="LSTM",
         sgpo_archive_size=2048,
         sgpo_kernel_tau=0.5,
         sgpo_quality_beta=2.0,
@@ -142,7 +139,7 @@ class SGPOAgent:
         actor_update_frequency=1,
         **kwargs,
     ):
-        del K, dynamic_beta, value_model_type
+        
         set_seed(seed)
         self.device = torch.device(device)
 
@@ -204,7 +201,7 @@ class SGPOAgent:
             device=self.device,
         )
 
-        self.discount = kwargs.get("discount", v_gamma)
+        self.discount = 0.99
         self.total_steps = total_steps
         self.update_epochs_policy = update_epochs_policy
         self.update_epochs_val = update_epochs_val

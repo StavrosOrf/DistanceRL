@@ -151,7 +151,7 @@ class SABLEPIAgent:
         trust_region_eta=0.05,
         nip_alpha=0.0,
         nip_beta=10.0,
-        eval_interval=10_000,
+        eval_interval=5_000,
         **kwargs,
     ):
         del kwargs
@@ -339,11 +339,12 @@ class SABLEPIAgent:
                 total_reward += reward
             returns.append(total_reward)
         mean_return = np.mean(returns)
-        print(f"Step {step}: Eval return {mean_return:.2f}")
+        print(f"Step {step}: Eval return {mean_return:.2f} (buffer size: {len(self.buffer)})")
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/return": mean_return, "step": step})
 
     def train(self):
+        print(f"Starting SABLE-PI training for {self.total_steps} steps...")
         obs, _ = self.env.reset()
         episode_reward = 0.0
         episode_length = 0
@@ -364,6 +365,7 @@ class SABLEPIAgent:
             episode_length += 1
 
             if done:
+                print(f"Episode done at step {step}: R={episode_reward:.1f}, L={episode_length}")
                 if self.wandb_run is not None:
                     self.wandb_run.log({
                         "train/episode_return": episode_reward,
@@ -376,6 +378,13 @@ class SABLEPIAgent:
 
             if len(self.buffer) < self.batch_size:
                 continue
+
+            # Training updates
+            if step <= self.warmup_steps:
+                continue
+            
+            if step % 1000 == 0:
+                print(f"Step {step}/{self.total_steps}: Training updates...")
 
             for _ in range(self.update_epochs):
                 batch = self.buffer.sample(self.batch_size)
@@ -399,4 +408,5 @@ class SABLEPIAgent:
                     self.wandb_run.log(log_data)
 
             if step % self.eval_interval == 0:
+                print(f"Starting evaluation at step {step}...")
                 self.evaluate(step)
