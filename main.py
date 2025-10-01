@@ -1,8 +1,26 @@
 import argparse
 from datetime import datetime
+from pathlib import Path
+
 import wandb
+import yaml
 
 from distRL import DistanceAgent
+from classic_rl import make_agent
+
+
+def load_classic_hyperparams(algo: str, env_id: str) -> dict:
+    hyperparam_path = Path(__file__).parent / "classic_rl" / "hyperparams" / f"{algo.lower()}.yaml"
+    if not hyperparam_path.exists():
+        raise FileNotFoundError(f"Hyperparameter file not found for {algo}: {hyperparam_path}")
+
+    with open(hyperparam_path, "r", encoding="utf-8") as file:
+        data = yaml.safe_load(file)
+
+    if env_id not in data:
+        raise KeyError(f"No hyperparameters specified for env {env_id} and algo {algo}")
+
+    return data[env_id]
 
 
 def main():
@@ -44,6 +62,12 @@ def main():
     
     args = parser.parse_args()
 
+    classic_hparams = None
+    if args.algo != "DistRL":
+        classic_hparams = load_classic_hyperparams(args.algo, args.env_id)
+        for key, value in classic_hparams.items():
+            setattr(args, key, value)
+
     exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     group_name = args.env_id + "_test"
 
@@ -68,6 +92,15 @@ def main():
 
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
+    else:
+        if classic_hparams is None:
+            raise RuntimeError("Classic hyperparameters were not loaded.")
+        agent_kwargs = {**classic_hparams,
+                        "env_id": args.env_id,
+                        "seed": args.seed,
+                        "device": args.device,
+                        "wandb_run": args.wandb_run}
+        agent = make_agent(args.algo, **agent_kwargs)
 
     agent.train()
 

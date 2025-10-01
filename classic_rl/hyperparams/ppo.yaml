@@ -1,0 +1,47 @@
+Pendulum-v1:
+  total_steps: 200000
+  rollout_steps: 2048
+  update_epochs: 10
+  minibatch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  learning_rate: 0.0003
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 5
+
+LunarLanderContinuous-v2:
+  total_steps: 500000
+  rollout_steps: 4096
+  update_epochs: 10
+  minibatch_size: 256
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  learning_rate: 0.0003
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
+
+MountainCarContinuous-v0:
+  total_steps: 150000
+  rollout_steps: 1024
+  update_epochs: 10
+  minibatch_size: 64
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_coef: 0.2
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  learning_rate: 0.0003
+  hidden_size: 128
+  eval_interval: 10000
+  eval_episodes: 5

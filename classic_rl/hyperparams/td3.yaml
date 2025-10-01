@@ -1,0 +1,50 @@
+Pendulum-v1:
+  total_steps: 200000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 25000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 5
+
+LunarLanderContinuous-v2:
+  total_steps: 1000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  hidden_size: 400
+  eval_interval: 20000
+  eval_episodes: 10
+
+MountainCarContinuous-v0:
+  total_steps: 300000
+  buffer_size: 500000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 5
