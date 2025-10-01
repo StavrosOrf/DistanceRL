@@ -140,9 +140,11 @@ class Trajectory_ReplayBuffer(object):
             traj_lengths = np.maximum(traj_lengths, seq_length)
             # print(f'Changed traj_lengths: {traj_lengths}')            
             print(f'!!! It is recommended to use seq_length smaller than the minimum traj_length in the buffer.')
-
-        start = np.random.randint(
-            0, traj_lengths - seq_length, size=batch_size)                
+            start = np.random.randint(
+                0, traj_lengths - seq_length + 1, size=batch_size)                
+        else:
+            start = np.random.randint(
+                0, traj_lengths - seq_length, size=batch_size)                
         
         start = start.astype(int)
 

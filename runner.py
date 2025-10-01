@@ -32,7 +32,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                     f' --lr {lr}' + \
                                     f' --hidden-size {hidden_size}' + \
                                     f' --seed {seed}' + \
-                                    f' --exp_prefix {name}' + \
+                                    f' --exp-prefix {name}' + \
                                     ' --log_to_wandb' + \
                                     f' {extra}' + \
                                     '" Enter'

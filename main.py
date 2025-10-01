@@ -4,6 +4,7 @@ from pathlib import Path
 
 import wandb
 import yaml
+import torch
 
 from dist_rl.distRL import DistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
@@ -22,14 +23,14 @@ def main():
     # wandb args
     parser.add_argument("--lightweight_wandb", action="store_false", default=True,
                         help="If true, wandb will not save the code.")
-    parser.add_argument("--exp_prefix", type=str, default="test")
-    parser.add_argument("--group_name", type=str, default="")
+    parser.add_argument("--exp-prefix", type=str, default="test")
+    parser.add_argument("--group-name", type=str, default="")
     parser.add_argument("--project_name", type=str, default="DistRL ")
     parser.add_argument("--log_to_wandb", action="store_true", default=False,
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="ppo")
+    parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -49,6 +50,13 @@ def main():
                         help="If true, beta will be set dynamically based on the max reward gap in the batch.")
 
     args = parser.parse_args()
+    
+    
+    
+    #check if cuda is available
+    if args.device == "cuda" and not torch.cuda.is_available():
+        print("CUDA is not available, switching to CPU.")
+        args.device = "cpu"
 
     if args.algo not in ["DistRL"]:
         group_name = args.group_name + args.env_id + "_SB3"
@@ -59,6 +67,8 @@ def main():
     else:
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         group_name = args.group_name + args.env_id + "_test"
+        
+        
 
     if args.log_to_wandb:
         wandb_run = wandb.init(

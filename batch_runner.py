@@ -9,12 +9,9 @@ srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --q
 import os
 import random
 
-seeds = [10]
-
-# gpu = 'gpu' #gpu-a100 # gpu-a100-small # gpu
-partition = 'gpu'
+partition = 'compute'  # gpu-a100 # gpu-a100-small # gpu, compute
 algo = 'DistRL'
-group_name = "_"
+group_name = "param_abl_"
 
 # if directory does not exist, create it
 if not os.path.exists('./slurm_logs'):
@@ -23,10 +20,11 @@ if not os.path.exists('./slurm_logs'):
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
 for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
-        for K in [64]:  # 512
+        for K in [8, 16]:  # 512
             for dynamic_beta in [True]:
-                for v_gamma in [1.1]:
-                    for lr in [3e-4]:
+                for v_gamma in [0.5, 1, 1.5]:
+                    # for lr in [3e-4]:
+                    for lr in [3e-4, 3e-3, 3e-5]:
                         for hidden_size in [256]:
                             for seed in [42]:
 
@@ -36,18 +34,21 @@ for envs in ['LunarLanderContinuous-v3']:
 
                                 run_name += str(random.randint(0, 100000))
                                 print(f"Running {run_name}")
-                                time = '24'  # in hours
+                                time = '23'  # in hours
 
                                 if partition == 'compute':
                                     cpu_cores = 2
                                     memory = '3800'  # memory per cpu core
+                                    batch_arg = '\n'
+
                                 else:
-                                    cpu_cores = 2
-                                    memory = '5500'  # memory per cpu core
+                                    cpu_cores = 1
+                                    memory = '5300'  # memory per cpu core
+                                    batch_arg = '#SBATCH --gpus-per-task=1'
 
                                 device = 'cpu' if partition == 'compute' else 'cuda'  # cpu or cuda
 
-                                python_command = 'python train.py' + \
+                                python_command = 'python main.py' + \
                                     ' --env-id ' + envs + \
                                     ' --algo ' + algo + \
                                     ' --device ' + device + \
@@ -57,11 +58,13 @@ for envs in ['LunarLanderContinuous-v3']:
                                     f' --lr {lr}' + \
                                     f' --hidden-size {hidden_size}' + \
                                     f' --seed {seed}' + \
+                                    f' --policy-training-start 10_000' + \
+                                    f' --val-training-start 10_000' + \
                                     f' --exp-prefix {run_name}' + \
-                                    f' --group-name {group_name}' + \
+                                    f' --group-name "{group_name}"' + \
                                     ' --log_to_wandb' + \
                                     f' {extra}'
-                                    
+
                                 print(python_command)
 
                                 command = '''#!/bin/sh
@@ -69,17 +72,17 @@ for envs in ['LunarLanderContinuous-v3']:
 #SBATCH --job-name="dist_rl"
 ''' + \
                                     f'#SBATCH --partition={partition}\n' + \
-                                    f'#SBATCH --time={time}:00:00' + \
+                                    f'#SBATCH --time={time}:00:00\n' + \
+                                    f'{batch_arg}' + \
                                     '''
 #SBATCH --ntasks=1
-#SBATCH --gpus-per-task=1
 ''' + \
                                     f'#SBATCH --cpus-per-task={cpu_cores}' + \
                                     '''
 ''' + \
                                     f'#SBATCH --mem-per-cpu={memory}' + \
                                     '''
-#SBATCH --account=research-eemcs-ese
+# SBATCH --account=research-eemcs-ese
 
 ''' + \
                                     f'#SBATCH --output=./slurm_logs/{run_name}.out' + \
@@ -95,10 +98,10 @@ unset CONDA_SHLVL
 source "$(conda info --base)/etc/profile.d/conda.sh"
 
 conda activate dt3
-previous=$(/usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' --format='csv' | /usr/bin/tail -n '+2')
+previous =$(/usr/bin/nvidia-smi - -query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' - -format='csv' | /usr/bin/tail - n '+2')
 
 ''' + 'srun ' + python_command + \
-''' 
+                                    '''
 
 /usr/bin/nvidia-smi - -query-accounted-apps = 'gpu_utilization,mem_utilization,max_memory_usage,time' - -format = 'csv' | /usr/bin/grep - v - F "$previous"
 
