@@ -1,3 +1,4 @@
+import torch
 import wandb
 from stable_baselines3 import PPO, A2C, DDPG, TD3, SAC
 from stable_baselines3.common.callbacks import EvalCallback
@@ -15,13 +16,19 @@ def train_sb3_agent(algo,
                     device,
                     **kwargs):
 
+    # set random seeds
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if device == "cuda":
+        torch.cuda.manual_seed_all(seed)
 
     hyperparam_file = f"./classic_rl/hyperparams/{algo.lower()}.yaml"
     with open(hyperparam_file, 'r') as f:
         config = yaml.safe_load(f)
     config = config.get(env_id, {})
-    
-    print(f'Training SB3 agent with {algo} on {env_id} with seed {seed} on {device}')    
+
+    print(
+        f'Training SB3 agent with {algo} on {env_id} with seed {seed} on {device}')
     print(config)
 
     env = gym.make(env_id)
@@ -29,19 +36,20 @@ def train_sb3_agent(algo,
     eval_env = gym.make(env_id)
 
     eval_callback = EvalCallback(eval_env,
-                                # best_model_save_path=save_dir,
-                                # log_path=eval_log_dir,
-                                eval_freq=config.get("eval_interval", 10000),
-                                n_eval_episodes=config.get("eval_episodes", 5),
-                                deterministic=True,
-                                render=False)
+                                 # best_model_save_path=save_dir,
+                                 # log_path=eval_log_dir,
+                                 eval_freq=config.get("eval_interval", 10000),
+                                 n_eval_episodes=config.get(
+                                     "eval_episodes", 5),
+                                 deterministic=True,
+                                 render=False)
 
     if algo == "td3":
         # Create action noise for exploration
         n_actions = env.action_space.shape[-1]
-        action_noise = NormalActionNoise(mean=np.zeros(n_actions), 
-                                       sigma=config.get("expl_noise", 0.1) * np.ones(n_actions))
-        
+        action_noise = NormalActionNoise(mean=np.zeros(n_actions),
+                                         sigma=config.get("expl_noise", 0.1) * np.ones(n_actions))
+
         model = TD3("MlpPolicy",
                     env,
                     verbose=1,
@@ -50,7 +58,8 @@ def train_sb3_agent(algo,
                     buffer_size=config.get("buffer_size", 1000000),
                     batch_size=config.get("batch_size", 256),
                     learning_starts=config.get("start_timesteps", 25000),
-                    policy_kwargs=dict(net_arch=[config.get("hidden_size", 256), config.get("hidden_size", 256)]),
+                    policy_kwargs=dict(net_arch=[config.get(
+                        "hidden_size", 256), config.get("hidden_size", 256)]),
                     gamma=config.get("gamma", 0.99),
                     tau=config.get("tau", 0.005),
                     learning_rate=config.get("actor_lr", 0.0003),
@@ -60,24 +69,26 @@ def train_sb3_agent(algo,
                     action_noise=action_noise,
                     seed=seed)
     elif algo == "sac":
-        model = SAC("MlpPolicy", 
-                    env, 
+        model = SAC("MlpPolicy",
+                    env,
                     verbose=1,
-                    device=device, 
+                    device=device,
                     tensorboard_log="./logs/",
                     buffer_size=config.get("buffer_size", 1000000),
                     batch_size=config.get("batch_size", 256),
                     learning_starts=config.get("start_steps", 10000),
-                    policy_kwargs=dict(net_arch=[config.get("hidden_size", 256), config.get("hidden_size", 256)]),
+                    policy_kwargs=dict(net_arch=[config.get(
+                        "hidden_size", 256), config.get("hidden_size", 256)]),
                     gamma=config.get("gamma", 0.99),
                     tau=config.get("tau", 0.005),
-                    learning_rate=config.get("actor_lr", 0.0003),  # SB3 SAC uses single LR
+                    # SB3 SAC uses single LR
+                    learning_rate=config.get("actor_lr", 0.0003),
                     seed=seed)
     elif algo == "ppo":
-        model = PPO("MlpPolicy", 
-                    env, 
+        model = PPO("MlpPolicy",
+                    env,
                     verbose=1,
-                    device=device, 
+                    device=device,
                     tensorboard_log="./logs/",
                     n_steps=config.get("rollout_steps", 2048),
                     batch_size=config.get("minibatch_size", 64),
@@ -89,7 +100,8 @@ def train_sb3_agent(algo,
                     vf_coef=config.get("vf_coef", 0.5),
                     max_grad_norm=config.get("max_grad_norm", 0.5),
                     learning_rate=config.get("learning_rate", 0.0003),
-                    policy_kwargs=dict(net_arch=[config.get("hidden_size", 256), config.get("hidden_size", 256)]),
+                    policy_kwargs=dict(net_arch=[config.get(
+                        "hidden_size", 256), config.get("hidden_size", 256)]),
                     seed=seed)
     else:
         raise ValueError("Unknown algorithm")
@@ -100,6 +112,5 @@ def train_sb3_agent(algo,
                     WandbCallback(
                         verbose=2),
                     eval_callback])
-    
 
     # model.save(f"{save_path}/last_model.zip")

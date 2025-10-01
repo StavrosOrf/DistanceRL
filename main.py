@@ -8,11 +8,13 @@ import yaml
 from dist_rl.distRL import DistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 
+
 def main():
     parser = argparse.ArgumentParser()
 
     # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
-    parser.add_argument("--env-id", type=str, default="LunarLanderContinuous-v3")
+    parser.add_argument("--env-id", type=str,
+                        default="LunarLanderContinuous-v3")
     # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
@@ -21,6 +23,7 @@ def main():
     parser.add_argument("--lightweight_wandb", action="store_false", default=True,
                         help="If true, wandb will not save the code.")
     parser.add_argument("--exp_prefix", type=str, default="test")
+    parser.add_argument("--group_name", type=str, default="")
     parser.add_argument("--project_name", type=str, default="DistRL ")
     parser.add_argument("--log_to_wandb", action="store_true", default=False,
                         help="If true, logs will be sent to wandb.")
@@ -39,25 +42,22 @@ def main():
     parser.add_argument("--eval-episodes", type=int, default=10)
     parser.add_argument("--policy-training-start", type=int, default=2000)
     parser.add_argument("--val-training-start", type=int, default=2000)
-    parser.add_argument("--v_gamma", type=float, default=1.2)    
+    parser.add_argument("--v_gamma", type=float, default=1.2)
     parser.add_argument("--value-model-type", type=str, default="LSTM",
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,
                         help="If true, beta will be set dynamically based on the max reward gap in the batch.")
-    
+
     args = parser.parse_args()
 
-
-    
-    
     if args.algo not in ["DistRL"]:
-        group_name = args.env_id + "_SB3"
-        args.device = "cpu"  # SB3 algorithms run on CPU by default
+        group_name = args.group_name + args.env_id + "_SB3"
+        # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
-        exp_prefix = args.algo + "_SB3_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        exp_prefix = args.algo + "_SB3_seed=" + str(args.seed) + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     else:
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        group_name = args.env_id + "_test"
+        group_name = args.group_name + args.env_id + "_test"
 
     if args.log_to_wandb:
         wandb_run = wandb.init(

@@ -11,7 +11,7 @@ device = "cuda"  # "cpu" or "cuda"
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
 for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
-        for K in [16,32]:
+        for K in [16, 32]:
             for dynamic_beta in [True]:
                 for v_gamma in [1.1]:
                     for lr in [3e-4]:
@@ -20,7 +20,7 @@ for envs in ['LunarLanderContinuous-v3']:
 
                                 extra = " --dynamic-beta" if dynamic_beta else ""
 
-                                name = f"TargetDist_{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                name = f"{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                 command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                     f' --env-id {envs}' + \
