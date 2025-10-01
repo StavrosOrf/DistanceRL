@@ -5,7 +5,7 @@ from pathlib import Path
 import wandb
 import yaml
 
-from distRL import DistanceAgent
+from dist_rl.distRL import DistanceAgent
 from classic_rl import make_agent
 
 

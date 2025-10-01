@@ -3,16 +3,14 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from typing import Tuple
-import copy
 
-from loss import reward_aware_cosine_loss_exp
 import random
 import wandb
 import time
 
-from models import Actor, ValueNetLSTM, ValueNetTransformer
-from utils import Trajectory_ReplayBuffer
+from dist_rl.models import Actor, ValueNetLSTM, ValueNetTransformer
+from dist_rl.loss import reward_aware_cosine_loss_exp
+from dist_rl.utils import Trajectory_ReplayBuffer
 
 
 def set_seed(seed: int):
@@ -293,7 +291,7 @@ class DistanceAgent:
                      "train/policy_grad_norm": grad_norm,
                      "time/policy_step_time": time.time() - start_time},
                     step=self.steps_collected)
-                
+
         # Update the frozen target models
         # for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
         #     target_param.data.copy_(
