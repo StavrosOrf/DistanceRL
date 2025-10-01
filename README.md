@@ -23,13 +23,13 @@ pip install gymnasium[box2d] torch wandb pyyaml numpy
 ```
 
 Box2D support is required for environments such as
-`LunarLanderContinuous-v2` and `BipedalWalker-v3`.
+`LunarLanderContinuous-v3` and `BipedalWalker-v3`.
 
 ## Usage
 Launch training with the DistanceRL agent:
 
 ```bash
-python main.py --env-id LunarLanderContinuous-v2 --total-steps 2000000 \
+python main.py --env-id LunarLanderContinuous-v3 --total-steps 2000000 \
   --device cuda --log_to_wandb --exp_prefix dist_experiment
 ```
 

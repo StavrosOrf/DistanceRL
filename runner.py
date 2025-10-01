@@ -8,8 +8,8 @@ import time
 algo = "DistRL"
 device = "cuda"  # "cpu" or "cuda"
 
-# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v2]:
-for envs in ['LunarLanderContinuous-v2']:
+# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
+for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
         for K in [16,32]:
             for dynamic_beta in [True]:

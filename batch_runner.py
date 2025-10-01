@@ -19,8 +19,8 @@ algo = 'DistRL'
 if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
-# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v2]:
-for envs in ['LunarLanderContinuous-v2']:
+# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
+for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
         for K in [64]:  # 512
         # for K in [2, 6, 15, 32, 64]:  # 512

@@ -139,7 +139,7 @@ class DistanceAgent:
             wandb.run.log_code(".")
 
         if not dynamic_beta:
-            if env_id == "LunarLanderContinuous-v2":
+            if env_id == "LunarLanderContinuous-v3":
                 self.beta = 700.0
             elif env_id == "Pendulum-v1":
                 self.beta = 0.1
