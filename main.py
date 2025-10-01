@@ -9,6 +9,7 @@ import torch
 from dist_rl.distRL import DistanceAgent
 from dist_rl.recursive_distRL import RecDistanceAgent
 from dist_rl.sgpo import SGPOAgent
+from dist_rl.sable_pi import SABLEPIAgent
 from classic_rl.sb3_train import train_sb3_agent
 
 
@@ -103,6 +104,8 @@ def main():
         agent = RecDistanceAgent(**args.__dict__)
     elif args.algo == "SGPO":
         agent = SGPOAgent(**args.__dict__)
+    elif args.algo == "SABLE-PI":
+        agent = SABLEPIAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 
