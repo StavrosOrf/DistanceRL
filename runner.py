@@ -20,7 +20,7 @@ for envs in ['LunarLanderContinuous-v3']:
 
                                 extra = " --dynamic-beta" if dynamic_beta else ""
 
-                                name = f"{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                name = f"TrainOncePerEpisode_{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                 command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                     f' --env-id {envs}' + \

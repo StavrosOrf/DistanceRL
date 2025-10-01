@@ -54,7 +54,8 @@ def main():
         group_name = args.group_name + args.env_id + "_SB3"
         # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
-        exp_prefix = args.algo + "_SB3_seed=" + str(args.seed) + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        exp_prefix = args.algo + "_SB3_seed=" + \
+            str(args.seed) + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     else:
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         group_name = args.group_name + args.env_id + "_test"
@@ -63,7 +64,7 @@ def main():
         wandb_run = wandb.init(
             name=exp_prefix,
             group=group_name,
-            sync_tensorboard=True,
+            sync_tensorboard=True if args.algo in ["ppo", "td3", "sac"] else False,
             id=exp_prefix,
             project=args.project_name,
             entity='stavrosorf',
@@ -81,10 +82,9 @@ def main():
 
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
+        agent.train()
     else:
         agent = train_sb3_agent(**args.__dict__)
-
-    agent.train()
 
 
 if __name__ == "__main__":
