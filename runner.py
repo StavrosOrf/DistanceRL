@@ -5,7 +5,7 @@ This file is used to run various experiments in different tmux panes each.
 import os
 import time
 
-algo = "RecDistRL"
+algo = "SABLE-PI" # "DistRL" or "RecDistRL" or "SGPO"
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 K = 1

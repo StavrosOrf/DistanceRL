@@ -32,7 +32,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="RecDistRL")
+    parser.add_argument("--algo", type=str, default="SABLE-PI")
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -53,6 +53,14 @@ def main():
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,
                         help="If true, beta will be set dynamically based on the max reward gap in the batch.")
+    parser.add_argument("--sgpo-archive-size", type=int, default=2048)
+    parser.add_argument("--sgpo-kernel-tau", type=float, default=0.5)
+    parser.add_argument("--sgpo-quality-beta", type=float, default=2.0)
+    parser.add_argument("--sgpo-lambda", type=float, default=0.1)
+    parser.add_argument("--sgpo-embed-dim", type=int, default=64)
+    parser.add_argument("--policy-noise", type=float, default=0.2)
+    parser.add_argument("--policy-noise-clip", type=float, default=0.5)
+    parser.add_argument("--actor-update-frequency", type=int, default=1)
 
     args = parser.parse_args()
 
