@@ -5,7 +5,7 @@ This file is used to run various experiments in different tmux panes each.
 import os
 import time
 
-algo = "SABLE-PI" # "DistRL" or "RecDistRL" or "SGPO"
+algo = "DistRL" # "DistRL" or "RecDistRL" or "SGPO"
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 K = 1
@@ -13,8 +13,8 @@ K = 1
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
 for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
-        for q_percentile in [0.5, 0.7, 0.85]:
-            for top_k in [16, 32, 64]:
+        for q_percentile in [0.7]:
+            for top_k in [64]:
                 for dynamic_beta in [False]:
                     for v_gamma in [2]:
                         for lr in [2e-4]:
@@ -23,7 +23,7 @@ for envs in ['LunarLanderContinuous-v3']:
 
                                     extra = " --dynamic-beta" if dynamic_beta else ""
 
-                                    name = f"ReLUNoNorm{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                    name = f"MemBank_NegSamples_ReLUWithNorm{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                     command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                         f' --env-id {envs}' + \

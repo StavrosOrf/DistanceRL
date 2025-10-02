@@ -20,6 +20,33 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
+def _sched(self, t, t0, t1):
+    t = (t - t0) / max(1, (t1 - t0))
+    return float(np.clip(t, 0.0, 1.0))
+
+from collections import deque
+
+class MemoryBank:
+    def __init__(self, max_items=16384, device="cpu"):
+        self.device=device
+        self.embeds = deque()
+        self.rewards= deque()
+        self.max_items = max_items
+        self.count=0
+    def add(self, z, r):
+        z = z.detach().to(self.device)
+        r = r.detach().to(self.device).view(-1)
+        for i in range(z.size(0)):
+            if self.count >= self.max_items:
+                self.embeds.popleft(); self.rewards.popleft(); self.count-=1
+            self.embeds.append(z[i].clone()); self.rewards.append(r[i].clone()); self.count+=1
+    def sample_all(self):
+        if self.count==0:
+            return None, None
+        Z = torch.stack(list(self.embeds), dim=0)
+        R = torch.stack(list(self.rewards),dim=0)
+        return Z, R
+
 
 class RecDistanceAgent:
     def __init__(
@@ -104,11 +131,13 @@ class RecDistanceAgent:
         self.actor_target = copy.deepcopy(self.actor)
         self.distance_target = copy.deepcopy(self.distance)
 
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
-        self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr)
+        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr, weight_decay=1e-4)
+        self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr/2, weight_decay=1e-4)
 
         self.buffer = RolloutBuffer(
             buffer_size, self.obs_dim, self.act_dim, self.device)
+                
+        self.bank = MemoryBank(max_items=16384, device=self.device)
 
         self.K = K
         self.distance_training_start = val_training_start
@@ -223,15 +252,27 @@ class RecDistanceAgent:
 
             d = self.distance(obs, actions)
 
+            # with torch.no_grad():
+            #     d_comp = self.distance(obs_comp, actions_comp)
+                
             with torch.no_grad():
-                d_comp = self.distance(obs_comp, actions_comp)
+                z_comp_curr = nn.functional.normalize(self.distance(obs_comp, actions_comp), p=2, dim=1)
+            self.bank.add(z_comp_curr, rewards_comp)
+            
+            Z_bank, R_bank = self.bank.sample_all()
+            if Z_bank is not None:
+                d_comp = torch.cat([z_comp_curr, Z_bank], dim=0)
+                rewards_comp = torch.cat([rewards_comp, R_bank], dim=0)
+            else:
+                d_comp = z_comp_curr
 
             # calculate cosine similarity matrix
             d = nn.functional.normalize(d, p=2, dim=1)
             d_comp = nn.functional.normalize(d_comp, p=2, dim=1)
 
             # calculate cosine similarity matrix between all pairs in the batch
-            S = torch.matmul(d, d_comp.T)  # (B, B)
+            temp = 0.5  # try 0.3–1.0
+            S = (d @ d_comp.T) / temp 
 
             # rank-log weights (keep this!)
             ranks = torch.argsort(torch.argsort(
@@ -257,6 +298,18 @@ class RecDistanceAgent:
 
             # similarity-guided behavior cloning term (positives only, reward-weighted)
             policy_loss = - ((S * W) * mask.float()).sum(dim=1).mean()
+            
+            # add a very small "hard negatives" margin (no stochasticity)
+            
+            neg_mask = ~mask
+            # get per-row top-k_neg among negatives
+            k_neg = max(4, k // 4)
+            S_neg = S.masked_fill(~neg_mask, -1e9)
+            hard_neg_vals, _ = torch.topk(S_neg, k=k_neg, dim=1)
+            margin = 0.2
+            neg_term = nn.functional.relu(hard_neg_vals + margin).mean()
+
+            policy_loss = policy_loss + 0.5 * neg_term
 
 
             self.actor_optimizer.zero_grad()
