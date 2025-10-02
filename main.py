@@ -8,6 +8,7 @@ import torch
 
 from dist_rl.distRL import DistanceAgent
 from dist_rl.recursive_distRL import RecDistanceAgent
+from dist_rl.stoch_rec_distRL import StochRecDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 
 
@@ -42,8 +43,11 @@ def main():
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--hidden-size", type=int, default=16)
     parser.add_argument("--eval-episodes", type=int, default=2)
+    parser.add_argument("--eval-freq", type=int, default=1000)
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
+    parser.add_argument("--q-percentile", type=float, default=0.7)
+    parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--v_gamma", type=float, default=1)
     parser.add_argument("--value-model-type", type=str, default="LSTM",
                         help='"LSTM" or "Transformer"')
@@ -92,6 +96,8 @@ def main():
         agent = DistanceAgent(**args.__dict__)
     elif args.algo == "RecDistRL":
         agent = RecDistanceAgent(**args.__dict__)
+    elif args.algo == "StochRecDistRL":        
+        agent = StochRecDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 

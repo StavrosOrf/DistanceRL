@@ -135,20 +135,16 @@ def recursive_reward_aware_cosine_loss(
     eps: float = 1e-8,
 ) -> Tuple[torch.Tensor, dict]:
 
+    B = embeddings.size(0)
     # Normalize embeddings => cosine via dot product
     z = F.normalize(embeddings, p=2, dim=1, eps=eps)  # (B,d)
     z_next = F.normalize(next_embeddings, p=2, dim=1, eps=eps)  # (B,d)
     # (B,B) cosine similarities
     S = z @ z.T
-
-    # (B,B) cosine similarities
     S_next = z_next @ z_next.T
+    
     # Pairwise utility gaps and Δ via saturating exponential
     G = _pairwise_gaps(rewards)                     # (B,B)
-
-    # print(
-    #     f'G.shape: {G.shape}, S.shape: {S.shape}, S_next.shape: {S_next.shape}, dones.shape: {dones.shape}')
-
     if beta is None:
         # Normalize Delta within the batch
         beta = G.max().item()
@@ -159,16 +155,17 @@ def recursive_reward_aware_cosine_loss(
 
     # Target cosine
     T = target_cosine_torch(Delta, gamma=gamma)       # (B,B)
-
-    targets = (T + discount * (1 - dones) * S_next)/ (2 - dones)
-
-    Bsz = S.size(0)
+    
+    # Row-wise gating by dones: if row i terminal, don't bootstrap
+    done_row = dones.view(B, 1).to(S.dtype)                     # (B,1)
+    alive    = 1.0 - done_row                                   # (B,1)
+    targets  = alive * (0.5 * (T + discount * S_next)) + (1.0 - alive) * T  # (B,B)
+    
+    # targets = (T + discount * (1 - dones) * S_next)/ (2 - dones)
+    
     # create a mask to exclude diagonal
-    mask = torch.ones((Bsz, Bsz), dtype=torch.bool, device=S.device)
+    mask = torch.ones((B, B), dtype=torch.bool, device=S.device)
     mask.fill_diagonal_(False)
-
-    # print(f'mask.shape: {mask.shape}, mask: {mask}')
-
     diff = (S - targets)[mask]
     loss = (diff ** 2).mean()
 
@@ -179,6 +176,7 @@ def recursive_reward_aware_cosine_loss(
         "beta": beta,
         "mean_gap": G[mask].mean().item(),
         "mean_delta": Delta[mask].mean().item(),
+        "mean_targets": targets[mask].mean().item(),
         "mean_cos": S[mask].mean().item(),
     }
     return loss, info

@@ -15,7 +15,7 @@ class RolloutBuffer:
             (buffer_size,), dtype=torch.float32, device=device)
         self.dones = torch.zeros(
             (buffer_size,), dtype=torch.float32, device=device)
-        self.ptr = 0
+        self.ptr = -1
         self.entry_count = 0
         self.max_size = buffer_size
         self.device = device
@@ -169,3 +169,4 @@ class Trajectory_ReplayBuffer(object):
             dones_new[i, :] = dones[i, s:s+seq_length]
 
         return states_new.detach(), actions_new.detach(), rewards_new.detach(), dones_new.detach()
+

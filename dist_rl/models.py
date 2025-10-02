@@ -12,11 +12,11 @@ class Actor(nn.Module):
         # Policy network outputs mean and log_std (state-independent log_std for simplicity)
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, act_dim),
             nn.Tanh(),
         )
@@ -33,11 +33,11 @@ class Distance(nn.Module):
         super().__init__()
         self.dist = nn.Sequential(
             nn.Linear(obs_dim + act_dim, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
         )
 
@@ -71,10 +71,10 @@ class ValueNetLSTM(nn.Module):
         )
         self.head = nn.Sequential(
             nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
             nn.LayerNorm(hidden_size),
-            nn.SiLU(),
+            nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
         )
 
@@ -142,3 +142,64 @@ class ValueNetTransformer(nn.Module):
         h = self.norm(h.mean(dim=1))               # (B,H)
         v = self.head(h)                           # (B,1)
         return v
+
+
+class StochasticActor(nn.Module):
+    """
+    Tanh-squashed Gaussian policy à la SAC.
+    Produces actions in [min_action, max_action].
+    """
+    def __init__(self, obs_dim, act_dim, hidden_size=256,
+                 max_action=1.0, min_action=-1.0,
+                 log_std_min=-20, log_std_max=2):
+        super().__init__()
+        self.max_action = float(max_action)
+        self.min_action = float(min_action)
+        self._scale = (self.max_action - self.min_action) / 2.0
+        self._bias  = (self.max_action + self.min_action) / 2.0
+
+        self.net = nn.Sequential(
+            nn.Linear(obs_dim, hidden_size), nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size), nn.ReLU(),
+        )
+        self.mu_head = nn.Linear(hidden_size, act_dim)
+        self.log_std_head = nn.Linear(hidden_size, act_dim)
+        self.log_std_min = log_std_min
+        self.log_std_max = log_std_max
+
+    def forward(self, obs):
+        h = self.net(obs)
+        mu = self.mu_head(h)
+        log_std = self.log_std_head(h)
+        log_std = torch.clamp(log_std, self.log_std_min, self.log_std_max)
+        std = torch.exp(log_std)
+        return mu, std
+
+    @torch.no_grad()
+    def act_deterministic(self, obs):
+        """
+        Deterministic action for evaluation: tanh(mu) scaled to bounds.
+        obs: [B, obs_dim]
+        """
+        mu, _ = self.forward(obs)
+        y = torch.tanh(mu)
+        a = y * self._scale + self._bias
+        return a
+
+    def sample(self, obs):
+        """
+        Reparameterized sample with Tanh correction to log_prob.
+        Returns: action (scaled), log_prob, tanh(mu) (scaled)
+        """
+        mu, std = self.forward(obs)
+        eps = torch.randn_like(std)
+        z = mu + std * eps                # pre-tanh
+        y = torch.tanh(z)                 # [-1,1]
+        # Tanh correction: log(1 - tanh(z)^2) = log(1 - y^2)
+        log_prob = -0.5 * (((z - mu) / (std + 1e-8))**2 + 2*torch.log(std + 1e-8) + torch.log(torch.tensor(2*3.141592653589793, device=std.device))).sum(dim=-1)
+        log_prob -= torch.log(1 - y.pow(2) + 1e-6).sum(dim=-1)
+
+        # scale to env bounds (constant Jacobian -> no grad change; ok to ignore in log_prob)
+        action = y * self._scale + self._bias
+        mean_action = torch.tanh(mu) * self._scale + self._bias
+        return action, log_prob, mean_action
