@@ -180,32 +180,3 @@ def recursive_reward_aware_cosine_loss(
         "mean_cos": S[mask].mean().item(),
     }
     return loss, info
-
-# --------------------------- Minimal usage example ---------------------------
-
-
-if __name__ == "__main__":
-    torch.manual_seed(0)
-
-    B, d = 4, 32
-
-    for _ in range(10):
-        embeddings = torch.randn(B, d)              # your model's outputs
-        # any real-valued utilities
-        utilities = torch.randn(B) * 200.0 - 100
-        print(f"-------------------------------------\n")
-        print(
-            f"utilities range: min {utilities.min().item():.2f}, max {utilities.max().item():.2f}")
-
-        # Choose beta (scale of Δ mapping) and gamma (shape of target)
-        beta = 1.0      # try median(|u_i - u_j|) or set manually
-        gamma = 1.2     # >1 pushes faster toward -1 as Δ grows
-
-        loss, info = reward_aware_cosine_loss_exp(
-            embeddings=embeddings,
-            utilities=utilities,
-            beta=beta,
-            gamma=gamma,
-        )
-        print(f"loss = {loss.item():.6f}")
-        print("diagnostics:", {k: round(v, 4) for k, v in info.items()})

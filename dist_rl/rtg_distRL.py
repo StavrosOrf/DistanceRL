@@ -12,7 +12,7 @@ import time
 
 from dist_rl.models import Actor, Distance
 from dist_rl.loss import recursive_reward_aware_cosine_loss
-from dist_rl.utils import RolloutBuffer
+from dist_rl.utils import RTGRolloutBuffer
 
 
 def set_seed(seed: int):
@@ -21,7 +21,8 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-class RecDistanceAgent:
+
+class RTGRecDistanceAgent:
     def __init__(
         self,
         env_id,
@@ -105,14 +106,18 @@ class RecDistanceAgent:
         self.actor_target = copy.deepcopy(self.actor)
         self.distance_target = copy.deepcopy(self.distance)
 
-        self.actor_optimizer = optim.Adam(
-            self.actor.parameters(), lr=lr)
-        self.distance_optimizer = optim.Adam(
-            self.distance.parameters(), lr=lr)
+        self.actor_optimizer = optim.AdamW(
+            self.actor.parameters(),    lr=lr, weight_decay=1e-4)
+        self.distance_optimizer = optim.AdamW(
+            self.distance.parameters(), lr=1e-4, weight_decay=1e-4)
 
-        self.buffer = RolloutBuffer(
-            buffer_size, self.obs_dim, self.act_dim, self.device)
-
+        self.buffer = RTGRolloutBuffer(
+            buffer_size=buffer_size,
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            n_step=K,
+            device=self.device,
+        )
 
         self.K = K
         self.distance_training_start = val_training_start
@@ -129,7 +134,7 @@ class RecDistanceAgent:
 
         self.expl_sigma_start = 0.3
         self.expl_sigma_final = 0.05
-        self.expl_decay_steps = 100_000
+        self.expl_decay_steps = 300_000
         self.q_percentile = q_percentile
         self.top_k = top_k
 
@@ -167,7 +172,7 @@ class RecDistanceAgent:
 
         for _ in range(self.update_epochs_val):
             start_time = time.time()
-            obs, next_obs, actions, rewards, dones = self.buffer.get_batch(
+            obs, next_obs, actions, rewards, dones, _, _ = self.buffer.get_batch(
                 self.batch_size)
 
             d_embeddings = self.distance(obs, actions)
@@ -203,94 +208,93 @@ class RecDistanceAgent:
                     step=self.steps_collected)
 
     def train_policy(self):
-        for _ in range(self.update_epochs_policy):
-            start_time = time.time()
-            obs, next_obs, _, rewards, dones = self.buffer.get_batch(
-                self.batch_size)
+        """
+        Deterministic policy update that uses ONLY the distance metric's cosine similarity.
+        - For each batch state s_i, embed z_i = distance(s_i, actor(s_i)).
+        - Build a large candidate pool {(s_c, a_c, rtg_c)} from replay.
+        - Embed all candidates z_c = distance(s_c, a_c) (no-grad).
+        - Select top-K neighbors per row by cosine(z_i, z_c).
+        - Convert their RTGs to a row-wise target distribution P_tgt (softmax with temperature).
+        - Convert similarities to P_pred (softmax with temperature).
+        - Minimize CE(P_tgt || P_pred), optionally a tiny aux regression to RTG-weighted a*.
+        """        
+        start_time = time.time()        
 
-            obs_comp, next_obs_comp, actions_comp, rewards_comp, dones_comp = self.buffer.get_batch(
-                4 * self.batch_size)
+        # ---- hyperparams ----
+        K = min(32, self.batch_size // 2)     # number of cosine-nearest neighbors per row
+        comp_mult = 16                        # candidate pool multiplier (pool = comp_mult * batch_size)
+        comp_size = comp_mult * self.batch_size
 
-            # q = torch.quantile(rewards_comp, self.q_percentile)
-            # keep = rewards_comp >= q
+        # ---- sample current batch & large candidate pool ----
+        # buffer.get_batch must return (..., rtg, nreturn)
+        obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
+        obs_c, _, act_c, _, _, rtg_c, _ = self.buffer.get_batch(comp_size)
 
-            # obs_comp, actions_comp = obs_comp[keep], actions_comp[keep]
-            # rewards_comp = rewards_comp[keep]
+        # ---- freeze distance during policy update ----
+        for p in self.distance.parameters():
+            p.requires_grad = False
 
-            for p in self.distance.parameters():
-                p.requires_grad = False
+        # current actions and embeddings
+        a_pred = self.actor(obs)                               # [B, A]
+        z_i    = self.distance(obs, a_pred)                    # [B, H]
+        z_i    = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
 
-            # Compute distance features
-            actions = self.actor(obs)
+        # candidate embeddings (no-grad)
+        with torch.no_grad():
+            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
-            d = self.distance(obs, actions)
+        # ---- cosine similarities & top-K selection by cosine ----
+        # S = z_i @ z_c^T / tau_sim
+        S_full = (z_i @ z_c.T) #/ max(1e-6, tau_sim)           # [B, M]
+        K_eff = min(K, S_full.size(1))
+        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
+        # gather per-row top-K candidates
+        RTG_top = rtg_c.index_select(0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
+        S_top   = top_vals                                                                          # [B,K]
+
+        # ---- target (future-aware) distribution from RTG ----
+        # per-row baseline for stability (advantage-like)
+        G_base  = RTG_top.mean(dim=1, keepdim=True)
+        scores  = (RTG_top - G_base)
+        P_tgt   = torch.softmax(scores, dim=1)                                                     # [B,K]
+
+        # ---- predicted distribution from similarities ----
+        S_shift = S_top - S_top.max(dim=1, keepdim=True).values
+        P_pred  = torch.softmax(S_shift, dim=1)                                                    # [B,K]
+
+        # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
+        eps = 1e-8
+        ce = -(P_tgt * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
+        policy_loss = ce
+
+        # ---- optimize actor ----
+        self.actor_optimizer.zero_grad()
+        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
+        self.actor_optimizer.step()
+
+        # unfreeze distance
+        for p in self.distance.parameters():
+            p.requires_grad = True
+
+        # ---- logs ----
+        if self.wandb_run is not None:
             with torch.no_grad():
-                d_comp = self.distance(obs_comp, actions_comp)
-
-            # calculate cosine similarity matrix
-            d = nn.functional.normalize(d, p=2, dim=1)
-            d_comp = nn.functional.normalize(d_comp, p=2, dim=1)
-
-            # calculate cosine similarity matrix between all pairs in the batch
-            S = (d @ d_comp.T)
-
-            # rank-log weights (keep this!)
-            ranks = torch.argsort(torch.argsort(
-                rewards_comp, descending=True)).float() + 1
-            M = len(rewards_comp)
-            w_log = torch.log(torch.tensor(
-                M + 0.5, device=rewards_comp.device)) - torch.log(ranks)
-            w = (w_log / (w_log.sum() + 1e-8))                    # [B]
-            # print(f'Log weights: {w}')
-            W = w.unsqueeze(0).repeat(S.size(0), 1)           # [B,B]
-            # print(f'Log weights: {W}')
-            policy_loss = - ((S * W)).sum(dim=1).mean()
+                w_entropy = -(P_tgt.clamp_min(1e-8) * (P_tgt.clamp_min(1e-8).log())).sum(dim=1).mean()
+                sim_weighted = (S_top * P_tgt).sum(dim=1).mean()
+            self.wandb_run.log({
+                "train_p/policy_loss": policy_loss.item(),
+                "train_p/rtg_c_mean": rtg_c.mean().item(),
+                "train_p/rtg_c_max": rtg_c.max().item(),
+                "train_p/weight_entropy": w_entropy.item(),
+                "train_p/sim_weighted": sim_weighted.item(),
+                "train_p/topk_mean": S_top.mean().item(),
+                # "train_p/tau_sim": float(tau_sim),
+                "time/policy_step_time": time.time() - start_time
+            }, step=self.steps_collected)
             
-            # keep only top-k neighbors as positives (avoid "all pairs positive")
-            # k = min(self.top_k, S.size(1))
-            # topk_vals, topk_idx = torch.topk(S, k=k, dim=1)
-            # # print(f'Top-k values: {topk_vals}')
-            # mask = torch.zeros_like(
-            #     S, dtype=torch.bool).scatter(1, topk_idx, True)
-
-            # similarity-guided behavior cloning term (positives only, reward-weighted)
-            # policy_loss = - ((S * W) * mask.float()).sum(dim=1).mean()
-            
-
-            # add a very small "hard negatives" margin (no stochasticity)
-            # neg_mask = ~mask
-            # # get per-row top-k_neg among negatives
-            # k_neg = max(4, k // 4)
-            # S_neg = S.masked_fill(~neg_mask, -1e9)
-            # hard_neg_vals, _ = torch.topk(S_neg, k=k_neg, dim=1)
-            # margin = 0.2
-            # neg_term = nn.functional.relu(hard_neg_vals + margin).mean()
-
-            # policy_loss = policy_loss + 0.5 * neg_term
-
-            self.actor_optimizer.zero_grad()
-            policy_loss.backward()
-            # calculate the norm of the gradients, dont clip
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.actor.parameters(), max_norm=1.0)
-            self.actor_optimizer.step()
-
-            # --- unfreeze distance for its own updates later
-            for p in self.distance.parameters():
-                p.requires_grad = True
-
-            if self.wandb_run is not None:
-                self.wandb_run.log(
-                    {"train_p/policy_loss": policy_loss.item(),
-                     "train_p/policy_grad_norm": grad_norm,
-                    #  "train_p/sim_pos_mean": S[mask].mean().item(),
-                     "train_p/sim_all_mean": S.mean().item(),
-                    #  "train_p/q": q.item(),
-                    #  "train_p/num_kept": keep.sum().item(),
-                     "time/policy_step_time": time.time() - start_time},
-                    step=self.steps_collected)
-
         # Update the frozen target models
         for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
             target_param.data.copy_(

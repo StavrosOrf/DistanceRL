@@ -37,8 +37,7 @@ class RolloutBuffer:
         self.dones[self.ptr] = torch.tensor(
             done, dtype=torch.float32, device=self.device)
 
-    def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        # print(f"Buffer ptr: {self.ptr}, max size: {self.max_size}, batch size: {batch_size}, entry count: {self.entry_count}")
+    def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:        
         if self.entry_count >= self.max_size:
             idxs = np.random.choice(
                 self.max_size, size=batch_size, replace=False)
@@ -170,3 +169,102 @@ class Trajectory_ReplayBuffer(object):
 
         return states_new.detach(), actions_new.detach(), rewards_new.detach(), dones_new.detach()
 
+class RTGRolloutBuffer:
+    """
+    Replay buffer with:
+      - full Return-To-Go (RTG) back-filled at episode end,
+      - n-step returns (no bootstrap) for quick, lower-variance targets.
+
+    get_batch(...) returns: obs, next_obs, actions, rewards, dones, rtg, nstep
+    """
+    def __init__(self,
+                 buffer_size: int,
+                 obs_dim: int,
+                 act_dim: int,
+                 device,
+                 gamma: float = 0.99,
+                 n_step: int = 20):
+        self.max_size = int(buffer_size)
+        self.device   = torch.device(device)
+        self.gamma    = float(gamma)
+        self.n_step   = int(n_step)
+
+        self.obs      = torch.zeros((self.max_size, obs_dim),  dtype=torch.float32, device=self.device)
+        self.next_obs = torch.zeros((self.max_size, obs_dim),  dtype=torch.float32, device=self.device)
+        self.actions  = torch.zeros((self.max_size, act_dim),  dtype=torch.float32, device=self.device)
+        self.rewards  = torch.zeros((self.max_size,),          dtype=torch.float32, device=self.device)
+        self.dones    = torch.zeros((self.max_size,),          dtype=torch.float32, device=self.device)
+
+        # targets
+        self.rtg      = torch.zeros((self.max_size,),          dtype=torch.float32, device=self.device)  # full MC
+        self.nreturn  = torch.zeros((self.max_size,),          dtype=torch.float32, device=self.device)  # n-step sum
+
+        self.ptr = -1               # last written index
+        self.entry_count = 0        # number of written entries (<= max_size)
+
+        # track current episode indices to back-fill RTG & n-step at 'done'
+        self._ep_idx = []           # python list of integer indices (cyclic indices inside buffer)
+
+    def _advance_ptr(self) -> int:
+        self.ptr += 1
+        if self.ptr >= self.max_size:
+            self.ptr = 0
+        if self.entry_count < self.max_size:
+            self.entry_count += 1
+        return self.ptr
+
+    def add(self, obs, next_obs, action, reward, done: bool):
+        i = self._advance_ptr()
+
+        self.obs[i]      = torch.as_tensor(obs,      dtype=torch.float32, device=self.device)
+        self.next_obs[i] = torch.as_tensor(next_obs, dtype=torch.float32, device=self.device)
+        self.actions[i]  = torch.as_tensor(action,   dtype=torch.float32, device=self.device)
+        self.rewards[i]  = torch.as_tensor(reward,   dtype=torch.float32, device=self.device)
+        self.dones[i]    = torch.as_tensor(float(done), dtype=torch.float32, device=self.device)
+
+        # track episode indices
+        self._ep_idx.append(i)
+
+        # If episode ended, back-fill full RTG & n-step returns for that episode window
+        if done:
+            self._backfill_episode(self._ep_idx)
+            self._ep_idx.clear()
+
+    @torch.no_grad()
+    def _backfill_episode(self, ep_indices):
+        """Compute MC RTG and n-step returns for the finished episode."""
+        # ep_indices are in chronological order for this episode
+        # 1) Full MC RTG (backwards)
+        G = 0.0
+        for t_rev, idx in enumerate(reversed(ep_indices)):
+            r = float(self.rewards[idx].item())
+            G = r + self.gamma * G
+            self.rtg[idx] = G
+
+        # 2) n-step truncated return (forward window sums)
+        T = len(ep_indices)
+        r_cpu = self.rewards[ep_indices].detach().cpu().numpy()  # faster loop on CPU
+        gammas = np.power(self.gamma, np.arange(self.n_step, dtype=np.float32))
+        for t in range(T):
+            i = ep_indices[t]
+            horizon = min(self.n_step, T - t)  # truncate at episode end
+            if horizon <= 0:
+                self.nreturn[i] = 0.0
+                continue
+            self.nreturn[i] = float((r_cpu[t:t+horizon] * gammas[:horizon]).sum())
+
+    def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, ...]:
+        effective = min(self.entry_count, self.max_size)
+        replace = effective < batch_size
+        idxs = np.random.choice(effective, size=batch_size, replace=replace)
+        idxs = torch.as_tensor(idxs, device=self.device, dtype=torch.long)
+
+        return (
+            self.obs[idxs],
+            self.next_obs[idxs],
+            self.actions[idxs],
+            self.rewards[idxs],
+            self.dones[idxs],
+            self.rtg[idxs],
+            self.nreturn[idxs],
+        )

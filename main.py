@@ -9,6 +9,7 @@ import torch
 from dist_rl.distRL import DistanceAgent
 from dist_rl.recursive_distRL import RecDistanceAgent
 from dist_rl.stoch_rec_distRL import StochRecDistanceAgent
+from dist_rl.rtg_distRL import RTGRecDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 
 
@@ -32,7 +33,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="RecDistRL",)
+    parser.add_argument("--algo", type=str, default="RTGRecDistRL",)
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -49,6 +50,7 @@ def main():
     parser.add_argument("--q-percentile", type=float, default=0.7)
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--v_gamma", type=float, default=1)
+    parser.add_argument("--beta", type=float, default=10)
     parser.add_argument("--value-model-type", type=str, default="LSTM",
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,
@@ -89,7 +91,6 @@ def main():
 
         if not args.lightweight_wandb:
             wandb.run.log_code(".")
-            # wandb_run.log_code("distRL.py")
 
         args.wandb_run = wandb_run
     else:
@@ -101,6 +102,9 @@ def main():
         agent = RecDistanceAgent(**args.__dict__)
     elif args.algo == "StochRecDistRL":        
         agent = StochRecDistanceAgent(**args.__dict__)
+    elif args.algo == "RTGRecDistRL":
+        
+        agent = RTGRecDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 
