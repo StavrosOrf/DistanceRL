@@ -106,10 +106,10 @@ class RTGRecDistanceAgent:
         self.actor_target = copy.deepcopy(self.actor)
         self.distance_target = copy.deepcopy(self.distance)
 
-        self.actor_optimizer = optim.AdamW(
-            self.actor.parameters(),    lr=lr, weight_decay=1e-4)
-        self.distance_optimizer = optim.AdamW(
-            self.distance.parameters(), lr=1e-4, weight_decay=1e-4)
+        self.actor_optimizer = optim.Adam(
+            self.actor.parameters(),    lr=lr)
+        self.distance_optimizer = optim.Adam(
+            self.distance.parameters(), lr=lr)
 
         self.buffer = RTGRolloutBuffer(
             buffer_size=buffer_size,
@@ -134,7 +134,7 @@ class RTGRecDistanceAgent:
 
         self.expl_sigma_start = 0.3
         self.expl_sigma_final = 0.05
-        self.expl_decay_steps = 300_000
+        self.expl_decay_steps = 120_000
         self.q_percentile = q_percentile
         self.top_k = top_k
 
@@ -225,49 +225,44 @@ class RTGRecDistanceAgent:
         comp_mult = 16                        # candidate pool multiplier (pool = comp_mult * batch_size)
         comp_size = comp_mult * self.batch_size
 
-        # ---- sample current batch & large candidate pool ----
-        # buffer.get_batch must return (..., rtg, nreturn)
+        # ----- sample batch + large candidate pool (must include RTG in buffer) -----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
-        obs_c, _, act_c, _, _, rtg_c, _ = self.buffer.get_batch(comp_size)
+        obs_c, _, act_c, _, _, rtg_c_temp_disabled, rtg_c = self.buffer.get_batch(comp_size)
 
-        # ---- freeze distance during policy update ----
+        # ----- freeze distance while updating actor -----
         for p in self.distance.parameters():
             p.requires_grad = False
 
-        # current actions and embeddings
-        a_pred = self.actor(obs)                               # [B, A]
-        z_i    = self.distance(obs, a_pred)                    # [B, H]
-        z_i    = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
+        # current actor actions & embeddings
+        a_pred = self.actor(obs)                             # [B, A]
+        z_i    = self.distance(obs, a_pred)                  # [B, H]
+        z_i    = nn.functional.normalize(z_i, p=2, dim=1)
 
-        # candidate embeddings (no-grad)
+        # candidate embeddings (no grad)
         with torch.no_grad():
-            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = self.distance(obs_c, act_c)                # [M, H]
             z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
-        # ---- cosine similarities & top-K selection by cosine ----
-        # S = z_i @ z_c^T / tau_sim
-        S_full = (z_i @ z_c.T) #/ max(1e-6, tau_sim)           # [B, M]
-        K_eff = min(K, S_full.size(1))
-        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
+        # ----- cosine similarities & top-K selection by cosine -----
+        S_full = (z_i @ z_c.T)        # [B, M]
+        K_eff  = min(K, S_full.size(1))
+        S_top, idx_top = torch.topk(S_full, k=K_eff, dim=1, largest=True)  # [B,K]
+        RTG_top = rtg_c.index_select(0, idx_top.reshape(-1)).reshape(S_top.size(0), K_eff)  # [B,K]
 
-        # gather per-row top-K candidates
-        RTG_top = rtg_c.index_select(0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
-        S_top   = top_vals                                                                          # [B,K]
+        # ===== FUTURE-AWARE WEIGHTS (no CE; still linear loss) =====
+        # Option A (recommended): softmax over centered RTG -> normalized positive weights
+        Gc = RTG_top # - RTG_top.mean(dim=1, keepdim=True)     # center per row
+        W  = torch.softmax(Gc, dim=1)   # [B,K], sum=1
 
-        # ---- target (future-aware) distribution from RTG ----
-        # per-row baseline for stability (advantage-like)
-        G_base  = RTG_top.mean(dim=1, keepdim=True)
-        scores  = (RTG_top - G_base)
-        P_tgt   = torch.softmax(scores, dim=1)                                                     # [B,K]
+        # # Option B (no exp): rank-log weights over RTG (monotonic), then normalize
+        # ranks = torch.argsort(torch.argsort(RTG_top, dim=1, descending=True), dim=1).float() + 1.0
+        # M = RTG_top.size(1)
+        # w_log = (torch.log(torch.tensor(M+0.5, device=device)) - torch.log(ranks))  # [B,K]
+        # W = w_log / (w_log.sum(dim=1, keepdim=True) + 1e-8)
 
-        # ---- predicted distribution from similarities ----
-        S_shift = S_top - S_top.max(dim=1, keepdim=True).values
-        P_pred  = torch.softmax(S_shift, dim=1)                                                    # [B,K]
-
-        # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
-        eps = 1e-8
-        ce = -(P_tgt * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
-        policy_loss = ce
+        # ----- SIMPLE LINEAR OBJECTIVE (your style) -----
+        # S_top are the similarities; W are future-aware weights
+        policy_loss = - (S_top * W).sum(dim=1).mean()
 
         # ---- optimize actor ----
         self.actor_optimizer.zero_grad()
@@ -281,15 +276,10 @@ class RTGRecDistanceAgent:
 
         # ---- logs ----
         if self.wandb_run is not None:
-            with torch.no_grad():
-                w_entropy = -(P_tgt.clamp_min(1e-8) * (P_tgt.clamp_min(1e-8).log())).sum(dim=1).mean()
-                sim_weighted = (S_top * P_tgt).sum(dim=1).mean()
             self.wandb_run.log({
                 "train_p/policy_loss": policy_loss.item(),
                 "train_p/rtg_c_mean": rtg_c.mean().item(),
                 "train_p/rtg_c_max": rtg_c.max().item(),
-                "train_p/weight_entropy": w_entropy.item(),
-                "train_p/sim_weighted": sim_weighted.item(),
                 "train_p/topk_mean": S_top.mean().item(),
                 # "train_p/tau_sim": float(tau_sim),
                 "time/policy_step_time": time.time() - start_time

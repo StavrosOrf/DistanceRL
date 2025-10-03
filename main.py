@@ -50,7 +50,7 @@ def main():
     parser.add_argument("--q-percentile", type=float, default=0.7)
     parser.add_argument("--top-k", type=int, default=2)
     parser.add_argument("--v_gamma", type=float, default=1)
-    parser.add_argument("--beta", type=float, default=10)
+    parser.add_argument("--beta", type=float, default=5.0)
     parser.add_argument("--value-model-type", type=str, default="LSTM",
                         help='"LSTM" or "Transformer"')
     parser.add_argument("--dynamic-beta", action="store_true", default=False,

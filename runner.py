@@ -14,7 +14,7 @@ dynamic_beta = False
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
 for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
-        for K in [32]:
+        for K in [16, 64]:
             for top_k in [64]:
                 # for dynamic_beta in [False]:
                 for beta in [5]:                    
@@ -26,7 +26,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                     extra = " --dynamic-beta" if dynamic_beta else ""
 
                                     # name = f"Mem_newlr_LayerNorm_{algo}_top_k-{top_k}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"                                    
-                                    name = f"MoreExploration_{algo}_top_k-{top_k}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                    name = f"LinearPolicyObj_NORTG_{algo}-K={K}-top_k-{top_k}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                     command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                         f' --env-id {envs}' + \
@@ -42,6 +42,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                         f' --exp-prefix {name}' + \
                                         f' --q-percentile {q_percentile}' + \
                                         f' --top-k {top_k}' + \
+                                        f' --beta {beta}' + \
                                         f' --eval-episodes {eval_episodes}' + \
                                         f' --policy-training-start 10_000' + \
                                         f' --val-training-start 10_000' + \
