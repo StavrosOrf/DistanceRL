@@ -225,44 +225,49 @@ class RTGRecDistanceAgent:
         comp_mult = 16                        # candidate pool multiplier (pool = comp_mult * batch_size)
         comp_size = comp_mult * self.batch_size
 
-        # ----- sample batch + large candidate pool (must include RTG in buffer) -----
+              # ---- sample current batch & large candidate pool ----
+        # buffer.get_batch must return (..., rtg, nreturn)
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
-        obs_c, _, act_c, _, _, rtg_c_temp_disabled, rtg_c = self.buffer.get_batch(comp_size)
+        obs_c, _, act_c, _, _, rtg_c_dis, rtg_c = self.buffer.get_batch(comp_size)
 
-        # ----- freeze distance while updating actor -----
+        # ---- freeze distance during policy update ----
         for p in self.distance.parameters():
             p.requires_grad = False
 
-        # current actor actions & embeddings
-        a_pred = self.actor(obs)                             # [B, A]
-        z_i    = self.distance(obs, a_pred)                  # [B, H]
-        z_i    = nn.functional.normalize(z_i, p=2, dim=1)
+        # current actions and embeddings
+        a_pred = self.actor(obs)                               # [B, A]
+        z_i    = self.distance(obs, a_pred)                    # [B, H]
+        z_i    = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
 
-        # candidate embeddings (no grad)
+        # candidate embeddings (no-grad)
         with torch.no_grad():
-            z_c = self.distance(obs_c, act_c)                # [M, H]
+            z_c = self.distance(obs_c, act_c)                  # [M, H]
             z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
-        # ----- cosine similarities & top-K selection by cosine -----
-        S_full = (z_i @ z_c.T)        # [B, M]
-        K_eff  = min(K, S_full.size(1))
-        S_top, idx_top = torch.topk(S_full, k=K_eff, dim=1, largest=True)  # [B,K]
-        RTG_top = rtg_c.index_select(0, idx_top.reshape(-1)).reshape(S_top.size(0), K_eff)  # [B,K]
+        # ---- cosine similarities & top-K selection by cosine ----
+        # S = z_i @ z_c^T / tau_sim
+        S_full = (z_i @ z_c.T) #/ max(1e-6, tau_sim)           # [B, M]
+        K_eff = min(K, S_full.size(1))
+        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
-        # ===== FUTURE-AWARE WEIGHTS (no CE; still linear loss) =====
-        # Option A (recommended): softmax over centered RTG -> normalized positive weights
-        Gc = RTG_top # - RTG_top.mean(dim=1, keepdim=True)     # center per row
-        W  = torch.softmax(Gc, dim=1)   # [B,K], sum=1
+        # gather per-row top-K candidates
+        RTG_top = rtg_c.index_select(0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
+        S_top   = top_vals                                                                          # [B,K]
 
-        # # Option B (no exp): rank-log weights over RTG (monotonic), then normalize
-        # ranks = torch.argsort(torch.argsort(RTG_top, dim=1, descending=True), dim=1).float() + 1.0
-        # M = RTG_top.size(1)
-        # w_log = (torch.log(torch.tensor(M+0.5, device=device)) - torch.log(ranks))  # [B,K]
-        # W = w_log / (w_log.sum(dim=1, keepdim=True) + 1e-8)
+        # ---- target (future-aware) distribution from RTG ----
+        # per-row baseline for stability (advantage-like)
+        G_base  = RTG_top.mean(dim=1, keepdim=True)
+        scores  = (RTG_top - G_base)
+        P_tgt   = torch.softmax(scores, dim=1)                                                     # [B,K]
 
-        # ----- SIMPLE LINEAR OBJECTIVE (your style) -----
-        # S_top are the similarities; W are future-aware weights
-        policy_loss = - (S_top * W).sum(dim=1).mean()
+        # ---- predicted distribution from similarities ----
+        S_shift = S_top - S_top.max(dim=1, keepdim=True).values
+        P_pred  = torch.softmax(S_shift, dim=1)                                                    # [B,K]
+
+        # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
+        eps = 1e-8
+        ce = -(P_tgt * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
+        policy_loss = ce
 
         # ---- optimize actor ----
         self.actor_optimizer.zero_grad()
