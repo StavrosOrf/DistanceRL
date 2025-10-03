@@ -11,7 +11,7 @@ import wandb
 import time
 
 from dist_rl.models import Actor, Distance
-from dist_rl.loss import recursive_reward_aware_cosine_loss
+from dist_rl.loss import recursive_nstep_cosine_loss, recursive_reward_aware_cosine_loss
 from dist_rl.utils import RTGRolloutBuffer
 
 
@@ -141,8 +141,7 @@ class RTGRecDistanceAgent:
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
 
-        if self.wandb_run is not None:
-            # log code
+        if self.wandb_run is not None:            
             wandb.run.log_code(".")
 
         if not dynamic_beta:
@@ -166,13 +165,14 @@ class RTGRecDistanceAgent:
         obs_tensor = torch.tensor(
             obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         action = self.actor(obs_tensor).detach().cpu().numpy()[0]
+        
         return action
 
     def train_distance(self):
 
         for _ in range(self.update_epochs_val):
             start_time = time.time()
-            obs, next_obs, actions, rewards, dones, _, _ = self.buffer.get_batch(
+            obs, next_obs, actions, rewards, dones, _, n_returns = self.buffer.get_batch(
                 self.batch_size)
 
             d_embeddings = self.distance(obs, actions)
@@ -182,14 +182,24 @@ class RTGRecDistanceAgent:
                 d_embeddings_next = self.distance_target(
                     next_obs, next_actions)
 
-            distance_loss, info = recursive_reward_aware_cosine_loss(
+            # distance_loss, info = recursive_reward_aware_cosine_loss(
+            #     embeddings=d_embeddings,
+            #     next_embeddings=d_embeddings_next,
+            #     dones=dones,
+            #     rewards=rewards,
+            #     beta=self.beta,
+            #     discount=self.discount,
+            #     gamma=self.v_gamma,
+            # )
+            
+            distance_loss, info = recursive_nstep_cosine_loss(
                 embeddings=d_embeddings,
                 next_embeddings=d_embeddings_next,
                 dones=dones,
-                rewards=rewards,
-                beta=self.beta,
+                nreturns=n_returns,
                 discount=self.discount,
-                gamma=self.v_gamma,
+                n=self.K,
+                gamma_shape=self.v_gamma,
             )
 
             self.distance_optimizer.zero_grad()
@@ -250,7 +260,7 @@ class RTGRecDistanceAgent:
         K_eff = min(K, S_full.size(1))
         top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
-        # gather per-row top-K candidates
+        # gather per-row top-K candidates        
         RTG_top = rtg_c.index_select(0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
         S_top   = top_vals                                                                          # [B,K]
 

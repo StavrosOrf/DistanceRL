@@ -14,10 +14,10 @@ dynamic_beta = False
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
 for envs in ['LunarLanderContinuous-v3']:
     for batch_size in [256]:
-        for K in [2, 16, 32]:
+        for K in [64]:
             for top_k in [64]:
                 # for dynamic_beta in [False]:
-                for beta in [5]:                    
+                for beta in [100]:      # default 5              
                     for v_gamma in [2]:
                         for lr in [2e-4]:
                             for hidden_size in [256]:
@@ -26,7 +26,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                     extra = " --dynamic-beta" if dynamic_beta else ""
 
                                     # name = f"Mem_newlr_LayerNorm_{algo}_top_k-{top_k}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"                                    
-                                    name = f"Correct_beta_No_RTG_{algo}-K={K}-top_k-{top_k}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                    name = f"SmoothL1_beta100_{algo}-K={K}-top_k-{top_k}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                     command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                         f' --env-id {envs}' + \

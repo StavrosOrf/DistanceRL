@@ -142,7 +142,7 @@ def recursive_reward_aware_cosine_loss(
     # (B,B) cosine similarities
     S = z @ z.T
     S_next = z_next @ z_next.T
-    
+
     # Pairwise utility gaps and Δ via saturating exponential
     G = _pairwise_gaps(rewards)                     # (B,B)
     if beta is None:
@@ -155,14 +155,15 @@ def recursive_reward_aware_cosine_loss(
 
     # Target cosine
     T = target_cosine_torch(Delta, gamma=gamma)       # (B,B)
-    
+
     # Row-wise gating by dones: if row i terminal, don't bootstrap
     done_row = dones.view(B, 1).to(S.dtype)                     # (B,1)
-    alive    = 1.0 - done_row                                   # (B,1)
-    targets  = alive * (0.5 * (T + discount * S_next)) + (1.0 - alive) * T  # (B,B)
-    
+    alive = 1.0 - done_row                                   # (B,1)
+    targets = alive * (0.5 * (T + discount * S_next)) + \
+        (1.0 - alive) * T  # (B,B)
+
     # targets = (T + discount * (1 - dones) * S_next)/ (2 - dones)
-    
+
     # create a mask to exclude diagonal
     mask = torch.ones((B, B), dtype=torch.bool, device=S.device)
     mask.fill_diagonal_(False)
@@ -178,5 +179,60 @@ def recursive_reward_aware_cosine_loss(
         "mean_delta": Delta[mask].mean().item(),
         "mean_targets": targets[mask].mean().item(),
         "mean_cos": S[mask].mean().item(),
+    }
+    return loss, info
+
+
+def recursive_nstep_cosine_loss(
+    embeddings: torch.Tensor,          # z(s,a)
+    next_embeddings: torch.Tensor,     # z(s', π_targ(s'))
+    dones: torch.Tensor,               # (B,)
+    # (B,)  # <-- use n-step returns, not RTG
+    nreturns: torch.Tensor,
+    discount: float = 0.99,
+    # the n used in nreturns (for logging only)
+    n: int = 20,
+    gamma_shape: float = 1.0,          # your v_gamma: sharpness in t(Δ)=1-2Δ^γ
+    lam: float = 0.5,                  # bootstrap mixing
+    huber_delta: float = 0.2,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, dict]:
+
+    B = embeddings.size(0)
+    z = F.normalize(embeddings, p=2, dim=1)
+    z_next = F.normalize(next_embeddings, p=2, dim=1)
+
+    S = z @ z.T                        # (B,B)
+    S_next = z_next @ z_next.T              # (B,B)
+
+    # Pairwise future-aware gaps from n-step returns
+    u = nreturns.view(-1, 1)
+    G = (u - u.T).abs()                    # (B,B)
+
+    # Robust scale β: 95th percentile per batch (avoids hand-tuning)
+    with torch.no_grad():
+        beta = torch.quantile(G.reshape(-1), 0.95) + 1e-6
+    Delta = (G / beta).clamp(0., 1.)
+
+    # Target cosine from gap
+    T = 1.0 - 2.0 * (Delta ** float(gamma_shape))    # in [-1,1]
+
+    # Bootstrap toward next similarities (mask terminals on the "row")
+    alive = (1.0 - dones.view(-1, 1)).to(S.dtype)
+    Y = (1.0 - lam) * T + lam * alive * (discount * S_next)
+
+    # Exclude diagonal; use Huber for robustness
+    mask = torch.ones((B, B), dtype=torch.bool, device=S.device)
+    mask.fill_diagonal_(False)
+    err = (S - Y)[mask]
+    loss = F.smooth_l1_loss(err, torch.zeros_like(
+        err), beta=huber_delta, reduction='mean')
+
+    info = {
+        "beta": float(beta),
+        "mean_gap": float(G[mask].mean()),
+        "mean_delta": float(Delta[mask].mean()),
+        "mean_target": float(Y[mask].mean()),
+        "mean_cos": float(S[mask].mean()),
     }
     return loss, info
