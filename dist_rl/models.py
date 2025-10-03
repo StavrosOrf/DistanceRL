@@ -13,10 +13,10 @@ class Actor(nn.Module):
         # Policy network outputs mean and log_std (state-independent log_std for simplicity)
         self.actor = nn.Sequential(
             nn.Linear(obs_dim, hidden_size),
-            nn.LayerNorm(hidden_size),
+            # nn.LayerNorm(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
+            # nn.LayerNorm(hidden_size),
             nn.ReLU(),
             nn.Linear(hidden_size, act_dim),
             nn.Tanh(),

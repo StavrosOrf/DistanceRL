@@ -1,3 +1,4 @@
+from collections import deque
 import gymnasium as gym
 import numpy as np
 import torch
@@ -20,34 +21,6 @@ def set_seed(seed: int):
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
 
-def _sched(self, t, t0, t1):
-    t = (t - t0) / max(1, (t1 - t0))
-    return float(np.clip(t, 0.0, 1.0))
-
-from collections import deque
-
-class MemoryBank:
-    def __init__(self, max_items=16384, device="cpu"):
-        self.device=device
-        self.embeds = deque()
-        self.rewards= deque()
-        self.max_items = max_items
-        self.count=0
-    def add(self, z, r):
-        z = z.detach().to(self.device)
-        r = r.detach().to(self.device).view(-1)
-        for i in range(z.size(0)):
-            if self.count >= self.max_items:
-                self.embeds.popleft(); self.rewards.popleft(); self.count-=1
-            self.embeds.append(z[i].clone()); self.rewards.append(r[i].clone()); self.count+=1
-    def sample_all(self):
-        if self.count==0:
-            return None, None
-        Z = torch.stack(list(self.embeds), dim=0)
-        R = torch.stack(list(self.rewards),dim=0)
-        return Z, R
-
-
 class RecDistanceAgent:
     def __init__(
         self,
@@ -66,11 +39,11 @@ class RecDistanceAgent:
         device="cpu",
         wandb_run=None,
         eval_episodes=5,
+        eval_freq=1000,
         v_gamma=1.0,
         q_percentile=0.7,
         top_k=32,
         dynamic_beta=False,
-        value_model_type="LSTM",  # "LSTM" or "Transformer"
         **kwargs,
     ):
         set_seed(seed)
@@ -131,13 +104,14 @@ class RecDistanceAgent:
         self.actor_target = copy.deepcopy(self.actor)
         self.distance_target = copy.deepcopy(self.distance)
 
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr, weight_decay=1e-4)
-        self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr/2, weight_decay=1e-4)
+        self.actor_optimizer = optim.Adam(
+            self.actor.parameters(), lr=lr)
+        self.distance_optimizer = optim.Adam(
+            self.distance.parameters(), lr=lr)
 
         self.buffer = RolloutBuffer(
             buffer_size, self.obs_dim, self.act_dim, self.device)
-                
-        self.bank = MemoryBank(max_items=16384, device=self.device)
+
 
         self.K = K
         self.distance_training_start = val_training_start
@@ -148,6 +122,7 @@ class RecDistanceAgent:
         self.policy_training_start = policy_training_start
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
+        self.eval_freq = eval_freq
         self.tau = 0.005
         self.discount = 0.99
 
@@ -159,9 +134,9 @@ class RecDistanceAgent:
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
-        
+
         if self.wandb_run is not None:
-            #log code
+            # log code
             wandb.run.log_code(".")
 
         if not dynamic_beta:
@@ -176,6 +151,10 @@ class RecDistanceAgent:
         else:
             self.beta = None  # will be set dynamically during training
         print(f'Setting beta to: {self.beta}')
+
+    def _sched(self, t, t0, t1):
+        t = (t - t0) / max(1, (t1 - t0))
+        return float(np.clip(t, 0.0, 1.0))
 
     def _exploration_sigma(self):
         """Linear decay: 0..decay_steps ⇒ sigma goes start → final."""
@@ -203,7 +182,7 @@ class RecDistanceAgent:
                 next_actions = self.actor_target(next_obs)
                 d_embeddings_next = self.distance_target(
                     next_obs, next_actions)
-                
+
             distance_loss, info = recursive_reward_aware_cosine_loss(
                 embeddings=d_embeddings,
                 next_embeddings=d_embeddings_next,
@@ -240,10 +219,10 @@ class RecDistanceAgent:
 
             q = torch.quantile(rewards_comp, self.q_percentile)
             keep = rewards_comp >= q
-            
+
             obs_comp, actions_comp = obs_comp[keep], actions_comp[keep]
             rewards_comp = rewards_comp[keep]
-            
+
             for p in self.distance.parameters():
                 p.requires_grad = False
 
@@ -252,27 +231,15 @@ class RecDistanceAgent:
 
             d = self.distance(obs, actions)
 
-            # with torch.no_grad():
-            #     d_comp = self.distance(obs_comp, actions_comp)
-                
             with torch.no_grad():
-                z_comp_curr = nn.functional.normalize(self.distance(obs_comp, actions_comp), p=2, dim=1)
-            self.bank.add(z_comp_curr, rewards_comp)
-            
-            Z_bank, R_bank = self.bank.sample_all()
-            if Z_bank is not None:
-                d_comp = torch.cat([z_comp_curr, Z_bank], dim=0)
-                rewards_comp = torch.cat([rewards_comp, R_bank], dim=0)
-            else:
-                d_comp = z_comp_curr
+                d_comp = self.distance(obs_comp, actions_comp)
 
             # calculate cosine similarity matrix
             d = nn.functional.normalize(d, p=2, dim=1)
             d_comp = nn.functional.normalize(d_comp, p=2, dim=1)
 
             # calculate cosine similarity matrix between all pairs in the batch
-            temp = 0.5  # try 0.3–1.0
-            S = (d @ d_comp.T) / temp 
+            S = (d @ d_comp.T) 
 
             # rank-log weights (keep this!)
             ranks = torch.argsort(torch.argsort(
@@ -286,31 +253,26 @@ class RecDistanceAgent:
             # print(f'Log weights: {W}')
 
             # keep only top-k neighbors as positives (avoid "all pairs positive")
-            # k = max(4, self.batch_size // 8)
             k = min(self.top_k, S.size(1))
             topk_vals, topk_idx = torch.topk(S, k=k, dim=1)
             # print(f'Top-k values: {topk_vals}')
             mask = torch.zeros_like(
                 S, dtype=torch.bool).scatter(1, topk_idx, True)
-            # print(f'Top-k mask: {mask}')
-
-            # print(f'Shapes: S {S.shape}, W {W.shape}, mask {mask.shape}\n\n')
 
             # similarity-guided behavior cloning term (positives only, reward-weighted)
             policy_loss = - ((S * W) * mask.float()).sum(dim=1).mean()
-            
+
             # add a very small "hard negatives" margin (no stochasticity)
-            
-            neg_mask = ~mask
-            # get per-row top-k_neg among negatives
-            k_neg = max(4, k // 4)
-            S_neg = S.masked_fill(~neg_mask, -1e9)
-            hard_neg_vals, _ = torch.topk(S_neg, k=k_neg, dim=1)
-            margin = 0.2
-            neg_term = nn.functional.relu(hard_neg_vals + margin).mean()
 
-            policy_loss = policy_loss + 0.5 * neg_term
+            # neg_mask = ~mask
+            # # get per-row top-k_neg among negatives
+            # k_neg = max(4, k // 4)
+            # S_neg = S.masked_fill(~neg_mask, -1e9)
+            # hard_neg_vals, _ = torch.topk(S_neg, k=k_neg, dim=1)
+            # margin = 0.2
+            # neg_term = nn.functional.relu(hard_neg_vals + margin).mean()
 
+            # policy_loss = policy_loss + 0.5 * neg_term
 
             self.actor_optimizer.zero_grad()
             policy_loss.backward()
@@ -318,12 +280,12 @@ class RecDistanceAgent:
             grad_norm = torch.nn.utils.clip_grad_norm_(
                 self.actor.parameters(), max_norm=1.0)
             self.actor_optimizer.step()
-            
+
             # --- unfreeze distance for its own updates later
             for p in self.distance.parameters():
                 p.requires_grad = True
 
-            if self.wandb_run is not None:                
+            if self.wandb_run is not None:
                 self.wandb_run.log(
                     {"train_p/policy_loss": policy_loss.item(),
                      "train_p/policy_grad_norm": grad_norm,
@@ -363,16 +325,22 @@ class RecDistanceAgent:
         print(
             f"[Eval.] Reward {avg_reward:10.2f}, Steps: {np.mean(ep_steps):6.1f}")  # (Episodes: {self.eval_episodes})")
 
+        if avg_reward > self.best_reward:
+            self.best_reward = avg_reward
+            print(f"  New best reward! Models saved.")
+
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
+                                "eval/best_reward": self.best_reward,
                                 "eval/avg_ep_length": np.mean(ep_steps)},
                                step=self.steps_collected)
-        return avg_reward
 
     def train(self):
         self.steps_collected = 0
+        self.steps_since_eval = 0
         env_step = 0
         ep_reward = 0
+        self.best_reward = -float('inf')
 
         obs, _ = self.env.reset()
 
@@ -396,6 +364,7 @@ class RecDistanceAgent:
             self.buffer.add(obs, next_obs, action, reward, done)
 
             self.steps_collected += 1
+            self.steps_since_eval += 1
             env_step += 1
 
             # Train distance model
@@ -406,11 +375,19 @@ class RecDistanceAgent:
             if self.steps_collected > self.policy_training_start:
                 self.train_policy()
 
+            if self.steps_since_eval >= self.eval_freq and self.steps_collected > self.policy_training_start:
+                self.evaluate_policy()
+                self.steps_since_eval = 0
+
             obs = next_obs
 
             if done or truncated:
-                print(
-                    f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
+                if self.steps_collected < self.policy_training_start:
+                    print(
+                        f"[Collect: {self.steps_collected}/{self.policy_training_start:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
+                else:
+                    print(
+                        f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
 
                 if self.wandb_run is not None:
                     self.wandb_run.log(
@@ -422,5 +399,3 @@ class RecDistanceAgent:
                 env_step = 0
                 ep_reward = 0
                 obs, _ = self.env.reset()
-
-                eval_reward = self.evaluate_policy()

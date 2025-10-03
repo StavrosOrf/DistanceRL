@@ -5,7 +5,7 @@ This file is used to run various experiments in different tmux panes each.
 import os
 import time
 
-algo = "DistRL" # "DistRL" or "RecDistRL" or "SGPO"
+algo = "RecDistRL" # "DistRL" or "RecDistRL" or "SGPO"
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 K = 1
@@ -16,14 +16,15 @@ for envs in ['LunarLanderContinuous-v3']:
         for q_percentile in [0.7]:
             for top_k in [64]:
                 for dynamic_beta in [False]:
-                    for v_gamma in [2]:
+                    for v_gamma in [0.5]:
                         for lr in [2e-4]:
                             for hidden_size in [256]:
                                 for seed in [42]:
 
                                     extra = " --dynamic-beta" if dynamic_beta else ""
 
-                                    name = f"MemBank_NegSamples_ReLUWithNorm{algo}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                    # name = f"Mem_newlr_LayerNorm_{algo}_top_k-{top_k}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"                                    
+                                    name = f"Reference_{algo}_top_k-{top_k}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                     command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
                                         f' --env-id {envs}' + \
@@ -34,6 +35,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                         f' --v_gamma {v_gamma}' + \
                                         f' --lr {lr}' + \
                                         f' --hidden-size {hidden_size}' + \
+                                        f' --buffer-size 500_000' + \
                                         f' --seed {seed}' + \
                                         f' --exp-prefix {name}' + \
                                         f' --q-percentile {q_percentile}' + \
