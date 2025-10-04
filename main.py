@@ -19,7 +19,7 @@ def main():
 
     # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
     parser.add_argument("--env-id", type=str,
-                        default="CartPole-v1")
+                        default="MountainCarContinuous-v0")
     # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
@@ -34,7 +34,8 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="StochRTGRecDistRL",)
+    parser.add_argument("--algo", type=str, default="RTGRecDistRL",)
+    parser.add_argument("--noise-type", type=str, default="Sched",)
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -42,7 +43,9 @@ def main():
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
     parser.add_argument("--buffer-size", type=int, default=300_000)
-    # parser.add_argument("--max-grad-norm", type=float, default=0.5)
+    parser.add_argument("--rtg-enabled", action="store_true", default=False,
+                        help="If true, use RTG as returns, else use n-step returns.")
+    parser.add_argument("--expl-sigma", type=float, default=0.3)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--hidden-size", type=int, default=16)
     parser.add_argument("--eval-episodes", type=int, default=2)

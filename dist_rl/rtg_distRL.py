@@ -22,6 +22,30 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
+class OrnsteinUhlenbeckNoise:
+    """Ornstein-Uhlenbeck process for temporally correlated exploration noise."""
+    def __init__(self, size, mu=0.0, theta=0.15, sigma=0.2, dt=1e-2):
+        self.size = size
+        self.mu = mu
+        self.theta = theta
+        self.sigma = sigma
+        self.dt = dt
+        self.state = None
+        self.reset()
+    
+    def reset(self):
+        self.state = np.ones(self.size) * self.mu
+    
+    def sample(self):
+        dx = self.theta * (self.mu - self.state) * self.dt + \
+             self.sigma * np.sqrt(self.dt) * np.random.randn(self.size)
+        self.state += dx
+        return self.state
+    
+    def set_sigma(self, sigma):
+        self.sigma = sigma
+
+
 class RTGRecDistanceAgent:
     def __init__(
         self,
@@ -37,9 +61,12 @@ class RTGRecDistanceAgent:
         policy_training_start=500,
         val_training_start=500,
         lr=3e-4,
+        expl_sigma=0.3,
         hidden_size=64,
         device="cpu",
+        noise_type="OU",  # "OU"
         wandb_run=None,
+        rtg_enabled=True,
         eval_episodes=5,
         eval_freq=1000,
         v_gamma=1.0,
@@ -65,25 +92,47 @@ class RTGRecDistanceAgent:
         min_action = self.env.action_space.low[0]
         max_action = self.env.action_space.high[0]
 
-        # Print nicely and compact info about the training parameters
-        print("="*65)
-        print("            TRAINING CONFIGURATION")
-        print("="*65)
-        print(f"Environment: {env_id:15s} | Seed:         {seed:5}")
-        print(f"Total Steps: {total_steps:15d} | Buffer Size: {buffer_size:5}")
-        print(f"Batch Size:  {batch_size:15d} | Hidden Size:  {hidden_size:5}")
-        print(f"Learn. Rate: {lr:15} | Device:         {device:5}")
-        print(
-            f"Dist. Start: {val_training_start:15} | Policy Start: {policy_training_start:5}")
-        print(
-            f"Val Start:   {val_training_start:15} | Eval Ep.:     {eval_episodes:5}")
-        print(
-            f"Train Ep.:   {update_epochs_policy:15} | Val Ep.:      {update_epochs_val:5}")
-        print("="*65)
-        print(f"Observation space: {self.env.observation_space}")
-        print(f"Action space: {self.env.action_space}")
-        print(f"Max episode steps: {self.max_episode_steps}")
-        print("="*65)
+        # Print algorithm configuration in three columns
+        print("\n" + "="*70)
+        print(" "*10 + f"TRAINING CONFIGURATION for {env_id}")
+        print("="*70)
+        
+        # Prepare parameters in three columns
+        params = [            
+            ("Seed", seed),
+            ("K (n-step)", K),
+            ("Total Steps", f"{total_steps:,}"),
+            ("Comp Samples", comp_samples),
+            ("Buffer Size", f"{buffer_size:,}"),
+            ("Update Epochs Policy", update_epochs_policy),
+            ("Update Epochs Val", update_epochs_val),
+            ("Batch Size", batch_size),
+            ("Policy Train Start", policy_training_start),
+            ("Val Train Start", val_training_start),
+            ("Learning Rate", lr),
+            ("Exploration Sigma", expl_sigma),
+            ("Hidden Size", hidden_size),
+            ("Device", device),
+            ("RTG Enabled", rtg_enabled),
+            ("Eval Episodes", eval_episodes),
+            ("Eval Frequency", eval_freq),
+            ("V Gamma", v_gamma),
+            ("Noise Type", noise_type),
+        ]
+        
+        # Print in three columns
+        for i in range(0, len(params), 3):
+            row = params[i:i+3]
+            line = ""
+            for param_name, param_value in row:
+                line += f"{param_name:.<15s} {str(param_value):<8s}   "
+            print(line)
+        
+        print("="*70)
+        print(f"Observation Space: {self.env.observation_space}")
+        print(f"Action Space: {self.env.action_space}")
+        print(f"Max Episode Steps: {self.max_episode_steps}")
+        print("="*70 + "\n")
 
         # Model
         self.actor = Actor(
@@ -127,22 +176,31 @@ class RTGRecDistanceAgent:
         self.eval_episodes = eval_episodes
         self.eval_freq = eval_freq
         self.comp_samples = comp_samples
+        self.rtg_enabled = rtg_enabled
+        self.noise_type = noise_type
         self.tau = 0.005
         self.discount = 0.99
 
-        self.expl_sigma_start = 0.3
+        self.expl_sigma = expl_sigma
+        self.expl_sigma_start = expl_sigma
         self.expl_sigma_final = 0.05
         self.expl_decay_steps = 120_000
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
+        
+        # Initialize Ornstein-Uhlenbeck noise for exploration
+        self.ou_noise = OrnsteinUhlenbeckNoise(
+            size=self.act_dim,
+            mu=0.0,
+            theta=0.15,
+            sigma=self.expl_sigma,
+            dt=1e-2
+        )
 
         if self.wandb_run is not None:
             wandb.run.log_code(".")
 
-    def _sched(self, t, t0, t1):
-        t = (t - t0) / max(1, (t1 - t0))
-        return float(np.clip(t, 0.0, 1.0))
 
     def _exploration_sigma(self):
         """Linear decay: 0..decay_steps ⇒ sigma goes start → final."""
@@ -162,8 +220,13 @@ class RTGRecDistanceAgent:
 
         for _ in range(self.update_epochs_val):
             start_time = time.time()
-            obs, next_obs, actions, rewards, dones, _, n_returns = self.buffer.get_batch(
+            obs, next_obs, actions, rewards, dones, rtg, n_returns = self.buffer.get_batch(
                 self.batch_size)
+            
+            if self.rtg_enabled:
+                rewards = rtg
+            else:
+                rewards = n_returns
 
             d_embeddings = self.distance(obs, actions)
 
@@ -176,7 +239,7 @@ class RTGRecDistanceAgent:
                 embeddings=d_embeddings,
                 next_embeddings=d_embeddings_next,
                 dones=dones,
-                nreturns=n_returns,
+                nreturns=rewards,
                 discount=self.discount,
                 n=self.K,
                 gamma_shape=self.v_gamma,
@@ -216,8 +279,13 @@ class RTGRecDistanceAgent:
 
         # ---- sample current batch & large candidate pool ----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
-        obs_c, _, act_c, _, _, rtg_c_dis, rtg_c = self.buffer.get_batch(
+        obs_c, _, act_c, _, _, rtg_c_dis, n_returns = self.buffer.get_batch(
             self.comp_samples)
+        
+        if self.rtg_enabled:
+            returns = rtg_c_dis
+        else:
+            returns = n_returns
 
         # ---- freeze distance during policy update ----
         for p in self.distance.parameters():
@@ -239,7 +307,7 @@ class RTGRecDistanceAgent:
         top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
         # gather per-row top-K candidates
-        RTG_top = rtg_c.index_select(
+        RTG_top = returns.index_select(
             0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
         # [B,K]
         S_top = top_vals
@@ -274,8 +342,8 @@ class RTGRecDistanceAgent:
         if self.wandb_run is not None:
             self.wandb_run.log({
                 "train_p/policy_loss": policy_loss.item(),
-                "train_p/rtg_c_mean": rtg_c.mean().item(),
-                "train_p/rtg_c_max": rtg_c.max().item(),
+                "train_p/rtg_c_mean": returns.mean().item(),
+                "train_p/rtg_c_max": returns.max().item(),
                 "train_p/topk_mean": S_top.mean().item(),
                 "time/policy_step_time": time.time() - start_time
             }, step=self.steps_collected)
@@ -332,8 +400,14 @@ class RTGRecDistanceAgent:
 
             action = self.get_action(obs)
 
-            sigma = self._exploration_sigma()          # decays 0.3 → 0.05
-            noise = np.random.normal(loc=0.0, scale=sigma, size=action.shape)
+            if self.noise_type == "OU":
+                # Update sigma and use Ornstein-Uhlenbeck noise                
+                self.ou_noise.set_sigma(self.expl_sigma)
+                noise = self.ou_noise.sample()
+            else:
+                # use scheduled Gaussian noise
+                self.expl_sigma = self._exploration_sigma()   # decays 0.3 → 0.05
+                noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
 
             # per-dimension clip to env bounds
             low, high = self.env.action_space.low, self.env.action_space.high
@@ -375,9 +449,10 @@ class RTGRecDistanceAgent:
                     self.wandb_run.log(
                         {"rollout/ep_reward": ep_reward,
                          "rollout/ep_length": env_step,
-                         "rollout/sigma": sigma},
+                         "rollout/sigma": self.expl_sigma},
                         step=self.steps_collected)
 
                 env_step = 0
                 ep_reward = 0
                 obs, _ = self.env.reset()
+                self.ou_noise.reset()  # Reset OU noise for new episode
