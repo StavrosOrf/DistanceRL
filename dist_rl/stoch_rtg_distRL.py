@@ -1,16 +1,18 @@
 from collections import deque
+import math
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import copy
 
 import random
 import wandb
 import time
 
-from dist_rl.models import Actor, Distance
+from dist_rl.models import StochasticActor, Distance
 from dist_rl.loss import recursive_nstep_cosine_loss
 from dist_rl.utils import RTGRolloutBuffer
 
@@ -22,7 +24,7 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-class RTGRecDistanceAgent:
+class StochRTGRecDistanceAgent:
     def __init__(
         self,
         env_id,
@@ -49,8 +51,7 @@ class RTGRecDistanceAgent:
 
         # Env
         self.env = gym.make(env_id)
-        self.eval_env = gym.make(env_id)
-        assert isinstance(self.env.action_space, gym.spaces.Box)
+        self.eval_env = gym.make(env_id)        
 
         # how to get maximum step per episode
         if hasattr(self.env, '_max_episode_steps'):
@@ -61,8 +62,6 @@ class RTGRecDistanceAgent:
 
         self.obs_dim = int(np.prod(self.env.observation_space.shape))
         self.act_dim = int(np.prod(self.env.action_space.shape))
-        min_action = self.env.action_space.low[0]
-        max_action = self.env.action_space.high[0]
 
         # Print nicely and compact info about the training parameters
         print("="*65)
@@ -84,14 +83,34 @@ class RTGRecDistanceAgent:
         print(f"Max episode steps: {self.max_episode_steps}")
         print("="*65)
 
-        # Model
-        self.actor = Actor(
-            obs_dim=self.obs_dim,
-            act_dim=self.act_dim,
-            hidden_size=hidden_size,
-            max_action=max_action,
-            min_action=min_action
-        ).to(self.device)
+        space = self.env.action_space
+        if isinstance(space, gym.spaces.Box):
+            self.action_space_type = "box"
+            self.act_dim = int(np.prod(space.shape))
+            self.min_action = float(space.low[0])
+            self.max_action = float(space.high[0])
+            # SAC default for Box
+            target_entropy = -float(self.act_dim)
+        else:
+            assert isinstance(space, gym.spaces.Discrete)
+            self.action_space_type = "discrete"
+            self.act_dim = int(space.n)
+            self.min_action = None
+            self.max_action = None
+            # good default for discrete
+            target_entropy = 0.98 * math.log(self.act_dim + 1e-8)
+
+        # actor with type
+        self.actor = StochasticActor(self.obs_dim, self.act_dim, hidden_size,
+                                     max_action=self.max_action if self.action_space_type == "box" else 1.0,
+                                     min_action=self.min_action if self.action_space_type == "box" else 0.0,
+                                     action_space_type=self.action_space_type,
+                                     gumbel_tau=1.0).to(self.device)        
+
+        # set target entropy / alpha
+        self.target_entropy = target_entropy
+        self.log_alpha = torch.tensor(0.0, device=self.device, requires_grad=True)
+        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=lr)
 
         self.distance = Distance(
             obs_dim=self.obs_dim,
@@ -137,6 +156,15 @@ class RTGRecDistanceAgent:
 
         if self.wandb_run is not None:
             wandb.run.log_code(".")
+            
+    @property
+    def alpha(self):
+        return self.log_alpha.exp()
+
+    def _one_hot(self, idx: int) -> np.ndarray:
+        v = np.zeros(self.act_dim, dtype=np.float32)
+        v[idx] = 1.0
+        return v
 
     def _sched(self, t, t0, t1):
         t = (t - t0) / max(1, (t1 - t0))
@@ -149,12 +177,16 @@ class RTGRecDistanceAgent:
         # linear interpolation
         return self.expl_sigma_start + frac * (self.expl_sigma_final - self.expl_sigma_start)
 
-    def get_action(self, obs: np.ndarray) -> np.ndarray:
+    @torch.no_grad()
+    def get_action(self, obs: np.ndarray, deterministic: bool = False):
         obs_tensor = torch.tensor(
             obs, dtype=torch.float32, device=self.device).unsqueeze(0)
-        action = self.actor(obs_tensor).detach().cpu().numpy()[0]
-
-        return action
+        out = self.actor.act(obs_tensor, deterministic=deterministic)
+        if self.action_space_type == "box":
+            return out.cpu().numpy()[0]
+        else:
+            # return python int
+            return int(out.item())
 
     def train_distance(self):
 
@@ -166,9 +198,16 @@ class RTGRecDistanceAgent:
             d_embeddings = self.distance(obs, actions)
 
             with torch.no_grad():
-                next_actions = self.actor_target(next_obs)
-                d_embeddings_next = self.distance_target(
-                    next_obs, next_actions)
+                if self.action_space_type == "box":
+                    next_a = self.actor_target.act(
+                        next_obs, deterministic=True)           # [B, A]
+                else:
+                    # integer ids -> one-hot vectors
+                    next_ids = self.actor_target.act(
+                        next_obs, deterministic=True)         # [B]
+                    next_a = F.one_hot(
+                        next_ids.long(), num_classes=self.act_dim).float()
+                d_embeddings_next = self.distance_target(next_obs, next_a)
 
             distance_loss, info = recursive_nstep_cosine_loss(
                 embeddings=d_embeddings,
@@ -217,7 +256,7 @@ class RTGRecDistanceAgent:
 
         # ---- sample current batch & large candidate pool ----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
-        obs_c, _, act_c, _, _, rtg_c_dis, rtg_c = self.buffer.get_batch(
+        obs_c, _, act_c, _, _, _, nret_c = self.buffer.get_batch(
             comp_size)
 
         # ---- freeze distance during policy update ----
@@ -225,41 +264,44 @@ class RTGRecDistanceAgent:
             p.requires_grad = False
 
         # current actions and embeddings
-        a_pred = self.actor(obs)                               # [B, A]
-        z_i = self.distance(obs, a_pred)                    # [B, H]
-        z_i = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
+        # a_pred = self.actor(obs)                               # [B, A]
+        # Box: [B,A] floats; Discr: [B,nA] one-hot (ST)
+        a_pred, logp, a_mean = self.actor(obs)
+        z_i = nn.functional.normalize(self.distance(obs, a_pred), p=2, dim=1)
 
-        # candidate embeddings (no-grad)
+        # ---------- candidate embeddings (no grad) ----------
         with torch.no_grad():
-            z_c = self.distance(obs_c, act_c)                  # [M, H]
-            z_c = nn.functional.normalize(z_c, p=2, dim=1)
+            z_c = F.normalize(self.distance(obs_c, act_c), p=2, dim=1)  # [M,H]
 
-        # ---- cosine similarities & top-K selection by cosine ----
-        S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
-        K_eff = min(K, S_full.size(1))
-        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
+        # ---------- cosine similarities & top-K ----------
+        S_full = (z_i @ z_c.T)                                          # [B,M]
+        K_eff = min(self.K, S_full.size(1))
+        S_top, idx_top = torch.topk(
+            S_full, k=K_eff, dim=1, largest=True)  # [B,K]
 
-        # gather per-row top-K candidates
-        RTG_top = rtg_c.index_select(
-            0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
-        # [B,K]
-        S_top = top_vals
+        # gather n-step returns aligned with top-K
+        N_top = nret_c.index_select(
+            0, idx_top.reshape(-1)).reshape(S_top.size(0), K_eff)  # [B,K]
 
-        # ---- target (future-aware) distribution from RTG ----
-        # per-row baseline for stability (advantage-like)
-        G_base = RTG_top.mean(dim=1, keepdim=True)
-        scores = (RTG_top - G_base)
-        P_tgt = torch.softmax(scores, dim=1)           # [B,K]
+        # ---------- future-aware weights from n-step returns ----------
+        # center per-row (advantage-like), then softmax with temperature tau_n
+        Nc = (N_top - N_top.mean(dim=1, keepdim=True))
+        # [B,K], sum=1
+        W = torch.softmax(Nc, dim=1)
 
-        # ---- predicted distribution from similarities ----
+        # ---------- predicted probs from similarities ----------
         S_shift = S_top - S_top.max(dim=1, keepdim=True).values
-        # [B,K]
-        P_pred = torch.softmax(S_shift, dim=1)
+        P_pred = torch.softmax(S_shift, dim=1)                         # [B,K]
 
-        # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
+        # ---------- geometry loss: CE(W || P_pred) ----------
         eps = 1e-8
-        ce = -(P_tgt * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
-        policy_loss = ce
+        ce = -(W * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
+
+        # ---------- entropy term (SAC-style) ----------
+        alpha = self.alpha  # exp(log_alpha), clamped inside property
+        ent_term = alpha * logp.mean()  # maximize entropy -> +alpha * logπ
+
+        policy_loss = ce + ent_term
 
         # ---- optimize actor ----
         self.actor_optimizer.zero_grad()
@@ -267,19 +309,39 @@ class RTGRecDistanceAgent:
         torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
         self.actor_optimizer.step()
 
+        # ---------- alpha auto-tuning toward target entropy ----------
+        # after actor step
+        with torch.no_grad():
+            entropy = (-logp).mean()  # H ≈ E[-log π]
+
+        alpha_loss = -( self.log_alpha * (self.target_entropy - entropy).detach() )
+        # or equivalently: -(log_alpha * (target - H))
+
+        self.alpha_optimizer.zero_grad()
+        alpha_loss.backward()
+        self.alpha_optimizer.step()
+
         # unfreeze distance
         for p in self.distance.parameters():
             p.requires_grad = True
 
         # ---- logs ----
         if self.wandb_run is not None:
-            self.wandb_run.log({
-                "train_p/policy_loss": policy_loss.item(),
-                "train_p/rtg_c_mean": rtg_c.mean().item(),
-                "train_p/rtg_c_max": rtg_c.max().item(),
-                "train_p/topk_mean": S_top.mean().item(),
-                "time/policy_step_time": time.time() - start_time
-            }, step=self.steps_collected)
+            with torch.no_grad():
+                sim_w = (S_top * W).sum(dim=1).mean()
+                w_entropy = -(W.clamp_min(1e-8) *
+                              W.clamp_min(1e-8).log()).sum(dim=1).mean()
+                self.wandb_run.log({
+                    "train_p/policy_loss": policy_loss.item(),
+                    "train_p/ce_main": ce.item(),
+                    "train_p/entropy": ent_term.item(),
+                    "train_p/alpha_loss": alpha_loss.item(),
+                    "train_p/alpha": alpha.item(),
+                    "train_p/sim_weighted": sim_w.item(),
+                    "train_p/topk_mean": S_top.mean().item(),
+                    "train_p/weight_entropy": w_entropy.item(),
+                    "time/policy_step_time": time.time() - start_time
+                }, step=self.steps_collected)
 
         # Update the frozen target models
         for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
@@ -298,7 +360,7 @@ class RTGRecDistanceAgent:
             eval_truncated = False
             env_steps = 0
             while not eval_done and not eval_truncated:
-                eval_action = self.get_action(eval_obs)
+                eval_action = self.get_action(eval_obs, deterministic=True)
                 eval_obs, eval_reward, eval_done, eval_truncated, _ = self.eval_env.step(
                     eval_action)
                 total_reward += eval_reward
@@ -327,24 +389,24 @@ class RTGRecDistanceAgent:
         ep_reward = 0
         self.best_reward = -float('inf')
 
-        obs, _ = self.env.reset()        
+        obs, _ = self.env.reset()
 
         while self.steps_collected < self.total_steps:
 
-            action = self.get_action(obs)
+            action_env = self.get_action(obs, deterministic=False)
 
-            sigma = self._exploration_sigma()          # decays 0.3 → 0.05
-            noise = np.random.normal(loc=0.0, scale=sigma, size=action.shape)
+            # step env
+            next_obs, reward, done, truncated, _ = self.env.step(action_env)
 
-            # per-dimension clip to env bounds
-            low, high = self.env.action_space.low, self.env.action_space.high
-            action = np.clip(action + noise, low, high)
-
-            next_obs, reward, done, truncated, _ = self.env.step(action)
+            # encode action vector for buffer (for Distance)
+            if self.action_space_type == "box":
+                action_vec = action_env.astype(np.float32)
+            else:
+                action_vec = self._one_hot(action_env)  # one-hot vector
 
             ep_reward += reward
 
-            self.buffer.add(obs, next_obs, action, reward, done)
+            self.buffer.add(obs, next_obs, action_vec, reward, done)
 
             self.steps_collected += 1
             self.steps_since_eval += 1
@@ -375,8 +437,7 @@ class RTGRecDistanceAgent:
                 if self.wandb_run is not None:
                     self.wandb_run.log(
                         {"rollout/ep_reward": ep_reward,
-                         "rollout/ep_length": env_step,
-                         "rollout/sigma": sigma},
+                         "rollout/ep_length": env_step},
                         step=self.steps_collected)
 
                 env_step = 0

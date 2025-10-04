@@ -11,6 +11,7 @@ from dist_rl.recursive_distRL import RecDistanceAgent
 from dist_rl.stoch_rec_distRL import StochRecDistanceAgent
 from dist_rl.rtg_distRL import RTGRecDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
+from dist_rl.stoch_rtg_distRL import StochRTGRecDistanceAgent
 
 
 def main():
@@ -33,7 +34,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="RTGRecDistRL",)
+    parser.add_argument("--algo", type=str, default="StochRTGRecDistRL",)
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -95,16 +96,18 @@ def main():
         args.wandb_run = wandb_run
     else:
         args.wandb_run = None
-
+    print(f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
+    
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
     elif args.algo == "RecDistRL":
         agent = RecDistanceAgent(**args.__dict__)
     elif args.algo == "StochRecDistRL":        
         agent = StochRecDistanceAgent(**args.__dict__)
-    elif args.algo == "RTGRecDistRL":
-        
+    elif args.algo == "RTGRecDistRL":        
         agent = RTGRecDistanceAgent(**args.__dict__)
+    elif args.algo == "StochRTGRecDistRL":        
+        agent = StochRTGRecDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 

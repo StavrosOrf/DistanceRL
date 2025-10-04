@@ -232,7 +232,7 @@ def recursive_nstep_cosine_loss(
         "beta": float(beta),
         "mean_gap": float(G[mask].mean()),
         "mean_delta": float(Delta[mask].mean()),
-        "mean_target": float(Y[mask].mean()),
+        "mean_targets": float(Y[mask].mean()),
         "mean_cos": float(S[mask].mean()),
     }
     return loss, info

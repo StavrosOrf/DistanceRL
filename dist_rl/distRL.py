@@ -8,7 +8,7 @@ import random
 import wandb
 import time
 
-from dist_rl.models import Actor, ValueNetLSTM, ValueNetTransformer
+from dist_rl.models import Actor, ValueNetLSTM
 from dist_rl.loss import reward_aware_cosine_loss_exp
 from dist_rl.utils import Trajectory_ReplayBuffer
 
