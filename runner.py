@@ -10,28 +10,28 @@ rm -rf "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null
 import os
 import time
 
-algo = "StochRTGRecDistRL"  # "DistRL" or "RecDistRL" or "SGPO"
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 
-
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
-for envs in ['LunarLanderContinuous-v3']:
-    for batch_size in [256]:
-        for K in [16, 32]:
-            # for top_k in [64]:
-                # for dynamic_beta in [False]:
-                for beta in [100]:      # default 5
+for algo in ['RTGRecDistRL', 'StochRTGRecDistRL']:
+    for env in ['Pendulum-v1', 'MountainCarContinuous-v0', 'Hopper-v5',"CartPole-v1"]:
+        if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
+            continue
+
+        for batch_size in [256]:
+            for K in [64]:            
+                for comp_samples in [4096]:
                     for v_gamma in [2]:
                         for lr in [2e-4]:
                             for hidden_size in [256]:
                                 for seed in [42]:
 
                                     # name = f"Mem_newlr_LayerNorm_{algo}_top_k-{top_k}-K={K}-v_gamma={v_gamma}-dyn_beta={dynamic_beta}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
-                                    name = f"{algo}-K={K}-bs={batch_size}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                    name = f"{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
 
                                     command = 'tmux new-session -d \; send-keys "  /home/sorfanouda/anaconda3/envs/dt/bin/python main.py' + \
-                                        f' --env-id {envs}' + \
+                                        f' --env-id {env}' + \
                                         f' --algo {algo}' + \
                                         f' --device {device}' + \
                                         f' --batch-size {batch_size}' + \
@@ -45,6 +45,7 @@ for envs in ['LunarLanderContinuous-v3']:
                                         f' --eval-episodes {eval_episodes}' + \
                                         f' --policy-training-start 10_000' + \
                                         f' --val-training-start 10_000' + \
+                                        f' --comp-samples {comp_samples}' + \
                                         ' --log_to_wandb' + \
                                         '" Enter'
 

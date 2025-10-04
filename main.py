@@ -19,7 +19,7 @@ def main():
 
     # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
     parser.add_argument("--env-id", type=str,
-                        default="LunarLanderContinuous-v3")
+                        default="CartPole-v1")
     # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
@@ -38,6 +38,7 @@ def main():
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
+    parser.add_argument("--comp-samples", type=int, default=4096)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
     parser.add_argument("--buffer-size", type=int, default=300_000)
@@ -75,7 +76,7 @@ def main():
             str(args.seed) + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     else:
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        group_name = args.group_name + args.env_id + "_test"
+        group_name = args.group_name + args.env_id + "_testv1"
 
     if args.log_to_wandb:
         wandb_run = wandb.init(
@@ -96,6 +97,8 @@ def main():
         args.wandb_run = wandb_run
     else:
         args.wandb_run = None
+        
+    print("="*65)
     print(f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
     
     if args.algo == "DistRL":

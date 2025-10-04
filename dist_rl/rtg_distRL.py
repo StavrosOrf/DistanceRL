@@ -29,6 +29,7 @@ class RTGRecDistanceAgent:
         seed,
         K=5,
         total_steps=20_000,
+        comp_samples= 256,
         buffer_size=10**5,
         update_epochs_policy=1,
         update_epochs_val=1,
@@ -125,6 +126,7 @@ class RTGRecDistanceAgent:
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
         self.eval_freq = eval_freq
+        self.comp_samples = comp_samples
         self.tau = 0.005
         self.discount = 0.99
 
@@ -211,14 +213,11 @@ class RTGRecDistanceAgent:
         # ---- hyperparams ----
         # number of cosine-nearest neighbors per row
         K = min(32, self.batch_size // 2)
-        # candidate pool multiplier (pool = comp_mult * batch_size)
-        comp_mult = 16
-        comp_size = comp_mult * self.batch_size
 
         # ---- sample current batch & large candidate pool ----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
         obs_c, _, act_c, _, _, rtg_c_dis, rtg_c = self.buffer.get_batch(
-            comp_size)
+            self.comp_samples)
 
         # ---- freeze distance during policy update ----
         for p in self.distance.parameters():

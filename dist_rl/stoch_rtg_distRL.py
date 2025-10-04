@@ -31,6 +31,7 @@ class StochRTGRecDistanceAgent:
         seed,
         K=5,
         total_steps=20_000,
+        comp_samples=256,
         buffer_size=10**5,
         update_epochs_policy=1,
         update_epochs_val=1,
@@ -51,7 +52,7 @@ class StochRTGRecDistanceAgent:
 
         # Env
         self.env = gym.make(env_id)
-        self.eval_env = gym.make(env_id)        
+        self.eval_env = gym.make(env_id)
 
         # how to get maximum step per episode
         if hasattr(self.env, '_max_episode_steps'):
@@ -105,11 +106,12 @@ class StochRTGRecDistanceAgent:
                                      max_action=self.max_action if self.action_space_type == "box" else 1.0,
                                      min_action=self.min_action if self.action_space_type == "box" else 0.0,
                                      action_space_type=self.action_space_type,
-                                     gumbel_tau=1.0).to(self.device)        
+                                     gumbel_tau=1.0).to(self.device)
 
         # set target entropy / alpha
         self.target_entropy = target_entropy
-        self.log_alpha = torch.tensor(0.0, device=self.device, requires_grad=True)
+        self.log_alpha = torch.tensor(
+            0.0, device=self.device, requires_grad=True)
         self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=lr)
 
         self.distance = Distance(
@@ -144,6 +146,7 @@ class StochRTGRecDistanceAgent:
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
         self.eval_freq = eval_freq
+        self.comp_samples = comp_samples
         self.tau = 0.005
         self.discount = 0.99
 
@@ -156,7 +159,7 @@ class StochRTGRecDistanceAgent:
 
         if self.wandb_run is not None:
             wandb.run.log_code(".")
-            
+
     @property
     def alpha(self):
         return self.log_alpha.exp()
@@ -250,14 +253,10 @@ class StochRTGRecDistanceAgent:
         # ---- hyperparams ----
         # number of cosine-nearest neighbors per row
         K = min(32, self.batch_size // 2)
-        # candidate pool multiplier (pool = comp_mult * batch_size)
-        comp_mult = 16
-        comp_size = comp_mult * self.batch_size
-
         # ---- sample current batch & large candidate pool ----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
         obs_c, _, act_c, _, _, _, nret_c = self.buffer.get_batch(
-            comp_size)
+            self.comp_samples)
 
         # ---- freeze distance during policy update ----
         for p in self.distance.parameters():
@@ -314,7 +313,8 @@ class StochRTGRecDistanceAgent:
         with torch.no_grad():
             entropy = (-logp).mean()  # H ≈ E[-log π]
 
-        alpha_loss = -( self.log_alpha * (self.target_entropy - entropy).detach() )
+        alpha_loss = -(self.log_alpha *
+                       (self.target_entropy - entropy).detach())
         # or equivalently: -(log_alpha * (target - H))
 
         self.alpha_optimizer.zero_grad()
@@ -370,7 +370,7 @@ class StochRTGRecDistanceAgent:
 
         avg_reward = total_reward / self.eval_episodes
         print(
-            f"[Eval.] Reward {avg_reward:10.2f}, Steps: {np.mean(ep_steps):6.1f}")  # (Episodes: {self.eval_episodes})")
+            f"[Eval.] Reward {avg_reward:10.3f}, Steps: {np.mean(ep_steps):6.1f}")  # (Episodes: {self.eval_episodes})")
 
         if avg_reward > self.best_reward:
             self.best_reward = avg_reward
@@ -429,10 +429,10 @@ class StochRTGRecDistanceAgent:
             if done or truncated:
                 if self.steps_collected < self.policy_training_start:
                     print(
-                        f"[Collect: {self.steps_collected}/{self.policy_training_start:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
+                        f"[Collect: {self.steps_collected}/{self.policy_training_start:<5d}] Reward {ep_reward:10.3f}, Steps: {np.mean(env_step):6.1f}")
                 else:
                     print(
-                        f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
+                        f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {ep_reward:10.3f}, Steps: {np.mean(env_step):6.1f}")
 
                 if self.wandb_run is not None:
                     self.wandb_run.log(
