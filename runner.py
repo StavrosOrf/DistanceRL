@@ -20,8 +20,8 @@ MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'Inverted
 BOX2D_ENVS = ['LunarLanderContinuous-v3', 'MountainCarContinuous-v0', 'Pendulum-v1']
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 
-# PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
-PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
+PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
+# PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
 for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
@@ -29,19 +29,19 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
         # if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
         #     continue
         for batch_size in [256]:
-            for K in [512]:
+            for K in [128, 512]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        
-                        for noise_type in ["OU", "Sched"]: # "OU", "Sched", "Normal"
-                            for expl_sigma in [0.1, 0.2, 0.3]:  # 0.1, 0.2, 0.3
-                                for top_k in [32,64]:  # 2, 8, 32, 64
+                        for noise_type in ["OU"]: # "OU", "Sched", "Normal"
+                            for expl_sigma in [0.1, 0.3]:  # 0.1, 0.2, 0.3
+                                for top_k in [32]:  # 2, 8, 32, 64
                                     for lr in [2e-4]:
                                         for hidden_size in [256]:
                                             for seed in [42]:
                                                 
                                                 extra = " --rtg-enabled" if rtg_enabled else ""
                                                 
-                                                name = f"{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
+                                                name = f"NewPolicyLoss_{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
 
                                                 name = f'rtg_enabled={rtg_enabled}-expl_sigma={expl_sigma}-noise_type={noise_type}' + '-' + name
                                                 

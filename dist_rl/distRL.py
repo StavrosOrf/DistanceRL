@@ -336,6 +336,90 @@ class DistanceAgent:
         for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
             target_param.data.copy_(
                 self.tau * param.data + (1 - self.tau) * target_param.data)
+            
+    def train_policy_reward_only(self):
+        start_time = time.time()
+
+        # ---- sample current batch & large candidate pool ----
+        obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
+        obs_c, _, act_c, _, _, rtg_c_dis, n_returns = self.buffer.get_batch(
+            self.comp_samples)
+
+        if self.rtg_enabled:
+            returns = rtg_c_dis
+        else:
+            returns = n_returns
+
+        # ---- freeze distance during policy update ----
+        for p in self.distance.parameters():
+            p.requires_grad = False
+
+        # current actions and embeddings
+        a_pred = self.actor(obs)                               # [B, A]
+        z_i = self.distance(obs, a_pred)                    # [B, H]
+        z_i = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
+
+        # candidate embeddings (no-grad)
+        with torch.no_grad():
+            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = nn.functional.normalize(z_c, p=2, dim=1)
+
+        # ---- cosine similarities & top-K selection by cosine ----
+        S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
+        K_eff = min(self.top_k, S_full.size(1))
+        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
+
+        # Differentiable selection using softmax weights over top-K indices
+        # Create a soft selection matrix based on similarities
+        # [B, M] - zero out non-top-K elements, then softmax over top-K
+        S_masked = torch.full_like(S_full, float('-inf'))
+        S_masked.scatter_(1, top_idx, top_vals)  # Only keep top-K values
+        
+        # Softmax to create differentiable weights [B, M]
+        selection_weights = torch.softmax(S_masked, dim=1)  # [B, M]
+        
+        # print(f'selection_weights: {selection_weights}')
+        # print(f'returns: {returns}')
+        
+        # Differentiable weighted selection of returns
+        RTG_top = (selection_weights @ returns.unsqueeze(1)).squeeze(1)  # [B, M] @ [M, 1] -> [B, 1] -> [B]
+        
+        # Keep S_top for logging
+        S_top = top_vals
+        
+        # print(f'RTG_top: {RTG_top}')
+        # print(f'S_top: {S_top}')
+        
+        # Policy loss: maximize weighted return
+        policy_loss = -RTG_top.mean()
+
+        # ---- optimize actor ----
+        self.actor_optimizer.zero_grad()
+        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
+        self.actor_optimizer.step()
+
+        # unfreeze distance
+        for p in self.distance.parameters():
+            p.requires_grad = True
+
+        # ---- logs ----
+        if self.wandb_run is not None:
+            self.wandb_run.log({
+                "train_p/policy_loss": policy_loss.item(),
+                "train_p/rtg_c_mean": returns.mean().item(),
+                "train_p/rtg_c_max": returns.max().item(),
+                "train_p/topk_mean": S_top.mean().item(),
+                "time/policy_step_time": time.time() - start_time
+            }, step=self.steps_collected)
+
+        # Update the frozen target models
+        for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
+            target_param.data.copy_(
+                self.tau * param.data + (1 - self.tau) * target_param.data)
+        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(
+                self.tau * param.data + (1 - self.tau) * target_param.data)
 
     def evaluate_policy(self):
         total_reward = 0.0
@@ -419,7 +503,7 @@ class DistanceAgent:
 
             # Training policy
             if self.steps_collected > self.policy_training_start:
-                self.train_policy()
+                self.train_policy_reward_only()
 
             if self.steps_since_eval >= self.eval_freq and self.steps_collected > self.policy_training_start:
                 self.evaluate_policy()
