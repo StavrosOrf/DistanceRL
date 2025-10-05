@@ -1,23 +1,20 @@
+from collections import deque
 import gymnasium as gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import copy
 
 import random
 import wandb
 import time
 
-from dist_rl.models import Actor, ValueNetLSTM
-from dist_rl.loss import reward_aware_cosine_loss_exp
-from dist_rl.utils import Trajectory_ReplayBuffer
-
-
-def set_seed(seed: int):
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+from dist_rl.models import Actor, Distance
+from dist_rl.loss import recursive_nstep_cosine_loss
+from dist_rl.utils import (RTGRolloutBuffer,
+                           OrnsteinUhlenbeckNoise,
+                           set_seed)
 
 
 class DistanceAgent:
@@ -27,6 +24,7 @@ class DistanceAgent:
         seed,
         K=5,
         total_steps=20_000,
+        comp_samples=256,
         buffer_size=10**5,
         update_epochs_policy=1,
         update_epochs_val=1,
@@ -34,13 +32,16 @@ class DistanceAgent:
         policy_training_start=500,
         val_training_start=500,
         lr=3e-4,
+        expl_sigma=0.3,
         hidden_size=64,
         device="cpu",
+        noise_type="OU",  # "OU" or "scheduled Gaussian"
         wandb_run=None,
+        rtg_enabled=True,
+        model_save_path='./saved_models/',
         eval_episodes=5,
+        eval_freq=1000,
         v_gamma=1.0,
-        dynamic_beta=False,
-        value_model_type="LSTM",  # "LSTM" or "Transformer"
         **kwargs,
     ):
         set_seed(seed)
@@ -63,25 +64,48 @@ class DistanceAgent:
         min_action = self.env.action_space.low[0]
         max_action = self.env.action_space.high[0]
 
-        # Print nicely and compact info about the training parameters
-        print("="*65)
-        print("            TRAINING CONFIGURATION")
-        print("="*65)
-        print(f"Environment: {env_id:15s} | Seed:         {seed:5}")
-        print(f"Total Steps: {total_steps:15d} | Buffer Size: {buffer_size:5}")
-        print(f"Batch Size:  {batch_size:15d} | Hidden Size:  {hidden_size:5}")
-        print(f"Learn. Rate: {lr:15} | Device:         {device:5}")
-        print(
-            f"Dist. Start: {val_training_start:15} | Policy Start: {policy_training_start:5}")
-        print(
-            f"Val Start:   {val_training_start:15} | Eval Ep.:     {eval_episodes:5}")
-        print(
-            f"Train Ep.:   {update_epochs_policy:15} | Val Ep.:      {update_epochs_val:5}")
-        print("="*65)
-        print(f"Observation space: {self.env.observation_space}")
-        print(f"Action space: {self.env.action_space}")
-        print(f"Max episode steps: {self.max_episode_steps}")
-        print("="*65)
+        # Print algorithm configuration in three columns
+        print("\n" + "="*70)
+        print(" "*10 + f"TRAINING CONFIGURATION for {env_id} with DistRL")
+        print("="*70)
+
+        # Prepare parameters in three columns
+        params = [
+            ("Seed", seed),
+            ("K (n-step)", K),
+            ("Total Steps", f"{total_steps:,}"),
+            ("Comp Samples", comp_samples),
+            ("Buffer Size", f"{buffer_size:,}"),
+            ("Update Epochs Policy", update_epochs_policy),
+            ("Update Epochs Val", update_epochs_val),
+            ("Batch Size", batch_size),
+            ("Policy Train Start", policy_training_start),
+            ("Val Train Start", val_training_start),
+            ("Learning Rate", lr),
+            ("Exploration Sigma", expl_sigma),
+            ("Hidden Size", hidden_size),
+            ("Device", device),
+            ("RTG Enabled", rtg_enabled),
+            ("Eval Episodes", eval_episodes),
+            ("Eval Frequency", eval_freq),
+            ("V Gamma", v_gamma),
+            ("Noise Type", noise_type),
+            ("Model Save Path", model_save_path),            
+        ]
+
+        # Print in three columns
+        for i in range(0, len(params), 3):
+            row = params[i:i+3]
+            line = ""
+            for param_name, param_value in row:
+                line += f"{param_name:.<15s} {str(param_value):<8s}   "
+            print(line)
+
+        print("="*70)
+        print(f"Observation Space: {self.env.observation_space}")
+        print(f"Action Space: {self.env.action_space}")
+        print(f"Max Episode Steps: {self.max_episode_steps}")
+        print("="*70 + "\n")
 
         # Model
         self.actor = Actor(
@@ -92,35 +116,31 @@ class DistanceAgent:
             min_action=min_action
         ).to(self.device)
 
-        if value_model_type == "Transformer":
-            self.distance = ValueNetTransformer(
-                obs_dim=self.obs_dim,
-                act_dim=self.act_dim,
-                hidden_size=hidden_size,
-                seq_len=K,
-            ).to(self.device)
-        else:
-            self.distance = ValueNetLSTM(
-                obs_dim=self.obs_dim,
-                act_dim=self.act_dim,
-                hidden_size=hidden_size,
-                seq_len=K,
-            ).to(self.device)
+        self.distance = Distance(
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            hidden_size=hidden_size,
+        ).to(self.device)
 
-        # self.actor_target = copy.deepcopy(self.actor)
-        # self.distance_target = copy.deepcopy(self.distance)
+        self.actor_target = copy.deepcopy(self.actor)
+        self.distance_target = copy.deepcopy(self.distance)
 
-        self.actor_optimizer = optim.Adam(self.actor.parameters(), lr=lr)
-        self.distance_optimizer = optim.Adam(self.distance.parameters(), lr=lr)
+        self.actor_optimizer = optim.Adam(
+            self.actor.parameters(),    lr=lr)
+        self.distance_optimizer = optim.Adam(
+            self.distance.parameters(), lr=lr)
 
-        self.buffer = Trajectory_ReplayBuffer(
-            self.obs_dim,
-            self.act_dim,
-            self.max_episode_steps,
-            self.device,
-            max_size=buffer_size
+        self.buffer = RTGRolloutBuffer(
+            buffer_size=buffer_size,
+            obs_dim=self.obs_dim,
+            act_dim=self.act_dim,
+            n_step=K,
+            device=self.device,
         )
+        
+        self.model_save_path = model_save_path
 
+        self.seed = seed
         self.K = K
         self.distance_training_start = val_training_start
         self.total_steps = total_steps
@@ -130,47 +150,74 @@ class DistanceAgent:
         self.policy_training_start = policy_training_start
         self.val_training_start = val_training_start
         self.eval_episodes = eval_episodes
+        self.eval_freq = eval_freq
+        self.comp_samples = comp_samples
+        self.rtg_enabled = rtg_enabled
+        self.noise_type = noise_type
         self.tau = 0.005
+        self.discount = 0.99
+
+        self.expl_sigma = expl_sigma
+        self.expl_sigma_start = expl_sigma
+        self.expl_sigma_final = 0.05
+        self.expl_decay_steps = 120_000
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
 
+        # Initialize Ornstein-Uhlenbeck noise for exploration
+        self.ou_noise = OrnsteinUhlenbeckNoise(
+            size=self.act_dim,
+            mu=0.0,
+            theta=0.15,
+            sigma=self.expl_sigma,
+            dt=1e-2
+        )
+
         if self.wandb_run is not None:
             wandb.run.log_code(".")
 
-        if not dynamic_beta:
-            if env_id == "LunarLanderContinuous-v3":
-                self.beta = 700.0
-            elif env_id == "Pendulum-v1":
-                self.beta = 0.1
-            elif env_id == "MountainCarContinuous-v0":
-                self.beta = 0.1
-            else:
-                assert False, "Please set beta manually for this env!!!"
-        else:
-            self.beta = None  # will be set dynamically during training
-        print(f'Setting beta to: {self.beta}')
+    def _exploration_sigma(self):
+        """Linear decay: 0..decay_steps ⇒ sigma goes start → final."""
+        t = float(self.steps_collected)
+        frac = min(1.0, t / max(1, self.expl_decay_steps))
+        # linear interpolation
+        return self.expl_sigma_start + frac * (self.expl_sigma_final - self.expl_sigma_start)
 
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         obs_tensor = torch.tensor(
             obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         action = self.actor(obs_tensor).detach().cpu().numpy()[0]
+
         return action
 
     def train_distance(self):
 
-        for _ in range(self.update_epochs_policy):
+        for _ in range(self.update_epochs_val):
             start_time = time.time()
-            obs, actions, rewards, _ = self.buffer.get_batch(self.batch_size,
-                                                             self.K)
+            obs, next_obs, actions, rewards, dones, rtg, n_returns = self.buffer.get_batch(
+                self.batch_size)
 
-            embeddings = self.distance(obs, actions)
+            if self.rtg_enabled:
+                rewards = rtg
+            else:
+                rewards = n_returns
 
-            distance_loss, info = reward_aware_cosine_loss_exp(
-                embeddings=embeddings,
-                utilities=rewards.sum(dim=1),  # sum over K steps
-                beta=self.beta,
-                gamma=self.v_gamma,
+            d_embeddings = self.distance(obs, actions)
+
+            with torch.no_grad():
+                next_actions = self.actor_target(next_obs)
+                d_embeddings_next = self.distance_target(
+                    next_obs, next_actions)
+
+            distance_loss, info = recursive_nstep_cosine_loss(
+                embeddings=d_embeddings,
+                next_embeddings=d_embeddings_next,
+                dones=dones,
+                nreturns=rewards,
+                discount=self.discount,
+                n=self.K,
+                gamma_shape=self.v_gamma,
             )
 
             self.distance_optimizer.zero_grad()
@@ -189,113 +236,100 @@ class DistanceAgent:
                     step=self.steps_collected)
 
     def train_policy(self):
-        for _ in range(self.update_epochs_policy):
-            start_time = time.time()
-            obs_batch, actions_batch, rewards_batch, _ = self.buffer.get_batch(self.batch_size,
-                                                                               self.K)
+        """
+        Deterministic policy update that uses ONLY the distance metric's cosine similarity.
+        - For each batch state s_i, embed z_i = distance(s_i, actor(s_i)).
+        - Build a large candidate pool {(s_c, a_c, rtg_c)} from replay.
+        - Embed all candidates z_c = distance(s_c, a_c) (no-grad).
+        - Select top-K neighbors per row by cosine(z_i, z_c).
+        - Convert their RTGs to a row-wise target distribution P_tgt.
+        - Convert similarities to P_pre.
+        - Minimize CE(P_tgt || P_pred).
+        """
+        start_time = time.time()
 
-            obs_batch_comp, actions_batch_comp, rewards_batch_comp, _ = self.buffer.get_batch(self.batch_size,
-                                                                                              self.K)
+        # ---- hyperparams ----
+        # number of cosine-nearest neighbors per row
+        K = min(32, self.batch_size // 2)
 
-            # print(f'Batch Obs shape: {obs_batch.shape}')
-            # print(f'Batch Action shape: {actions_batch.shape}')
+        # ---- sample current batch & large candidate pool ----
+        obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
+        obs_c, _, act_c, _, _, rtg_c_dis, n_returns = self.buffer.get_batch(
+            self.comp_samples)
 
-            action_pred = self.actor(obs_batch[:, -1, :])
-            # print(f'Action prediction shape: {action_pred.shape}')
-            # print(f'Action unsqueeze shape: {action_pred.unsqueeze(1).shape}')
-            # print(f'Batch Action shape: {actions_batch[:,:-1,:].shape}')
-            all_actions = torch.cat([actions_batch[:, :-1, :],
-                                     action_pred.unsqueeze(1)], dim=1)
-            # print(f'All actions shape: {all_actions.shape}')
+        if self.rtg_enabled:
+            returns = rtg_c_dis
+        else:
+            returns = n_returns
 
-            # Compute distance features
-            d_batch = self.distance(obs_batch, all_actions)
-            # single step
-            # d_batch = self.distance(obs_batch[:, -1:, :], action_pred.unsqueeze(1))
-            # print(f'\n\nDistance shape: {d_batch.shape}')
+        # ---- freeze distance during policy update ----
+        for p in self.distance.parameters():
+            p.requires_grad = False
 
-            with torch.no_grad():
-                d_batch_comp = self.distance(
-                    obs_batch_comp, actions_batch_comp)
-                # print(f'Comparison Distance shape: {d_batch_comp.shape}')
+        # current actions and embeddings
+        a_pred = self.actor(obs)                               # [B, A]
+        z_i = self.distance(obs, a_pred)                    # [B, H]
+        z_i = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
 
-            # calculate cosine similarity matrix
-            d_batch = nn.functional.normalize(d_batch, p=2, dim=1)
-            d_batch_comp = nn.functional.normalize(d_batch_comp, p=2, dim=1)
-            # print(f'Normalized Distance shape: {d_batch.shape}')
-            # print(f'Normalized Comparison Distance shape: {d_batch_comp.shape}')
-            # S = (d_batch * d_batch_comp).sum(dim=1,
-            #                                  keepdim=True)  # cosine similarity
+        # candidate embeddings (no-grad)
+        with torch.no_grad():
+            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
-            # calculate cosine similarity matrix between all pairs in the batch
-            S_all = torch.matmul(d_batch, d_batch_comp.T)  # (B, B)
+        # ---- cosine similarities & top-K selection by cosine ----
+        S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
+        K_eff = min(K, S_full.size(1))
+        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
-            # print(f'Cosine similarity matrix shape: {S_all.shape}')
-            # print(f'Cosine similarity matrix values: {S_all}')
+        # gather per-row top-K candidates
+        RTG_top = returns.index_select(
+            0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
+        # [B,K]
+        S_top = top_vals
 
-            # print(f'\n\nCosine similarity shape: {S.shape}')
-            # print(f'Cosine similarity values: {S.squeeze()}')
+        # ---- target (future-aware) distribution from RTG ----
+        # per-row baseline for stability (advantage-like)
+        G_base = RTG_top.mean(dim=1, keepdim=True)
+        scores = (RTG_top - G_base)
+        P_tgt = torch.softmax(scores, dim=1)           # [B,K]
 
-            rewards_comp = rewards_batch_comp.sum(dim=1)  # sum over K steps
-            # print(f'Comparison rewards shape: {rewards_comp.shape}')
-            # normalize rewards to [0,1]
-            # rewards_comp = (rewards_comp - rewards_comp.min()) / \
-            #     (rewards_comp.max() - rewards_comp.min() + 1e-8)
+        # ---- predicted distribution from similarities ----
+        S_shift = S_top - S_top.max(dim=1, keepdim=True).values
+        # [B,K]
+        P_pred = torch.softmax(S_shift, dim=1)
 
-            # max_reward = 400
-            # rewards_comp = (rewards_comp - rewards_comp.min()) / (rewards_comp.max() - rewards_comp.min() + 1e-8)
+        # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
+        eps = 1e-8
+        ce = -(P_tgt * (P_pred.clamp_min(eps).log())).sum(dim=1).mean()
+        policy_loss = ce
 
-            # print(f'reward vector: {rewards_comp}')
-            # print(f'Normalized Comparison rewards shape: {rewards_comp.shape}')
+        # ---- optimize actor ----
+        self.actor_optimizer.zero_grad()
+        policy_loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
+        self.actor_optimizer.step()
 
-            # mask low rewards
-            # rewards_comp = torch.where(rewards_comp < 0.5, torch.zeros_like(rewards_comp), rewards_comp)
+        # unfreeze distance
+        for p in self.distance.parameters():
+            p.requires_grad = True
 
-            # print(f'reward vector: {rewards_comp}')
-
-            # Apply logarithmic weighting: w_i = (log(μ + 0.5) - log(i)) / Σ(log(μ + 0.5) - log(j))
-            sorted_indices = torch.argsort(
-                torch.argsort(rewards_comp, descending=True))
-            mu = len(rewards_comp)  # μ is the batch size
-            i = sorted_indices.float() + 1  # 1-indexed ranks
-
-            # # Calculate logarithmic weights
-            numerator = torch.log(torch.tensor(mu + 0.5)) - torch.log(i)
-            # # Calculate denominator as sum over all j from 1 to μ
-            j_values = torch.arange(1, mu + 1, dtype=torch.float32)
-            denominator = torch.sum(
-                torch.log(torch.tensor(mu + 0.5)) - torch.log(j_values))
-            rewards_comp = numerator / denominator
-            # rewards_comp = 1 - rewards_comp  # invert weights so higher rewards get higher weights
-            # print(f'reward: {rewards_comp}')
-
-            # print(f'Logarithmic weighted reward vector: {rewards_comp}')
-            rewards_comp = rewards_comp.unsqueeze(1).repeat(1, S_all.size(1))
-            # print(f'reward: {rewards_comp}')
-
-            # Policy loss: maximize cosine similarity weighted by rewards
-            policy_loss = - ((S_all + torch.ones_like(S_all))
-                             * rewards_comp.T).mean()
-            # print(f'Policy loss: {policy_loss.item()}\n')
-
-            self.actor_optimizer.zero_grad()
-            policy_loss.backward()
-            # calculate the norm of the gradients, dont clip
-            grad_norm = torch.nn.utils.clip_grad_norm_(
-                self.actor.parameters(), max_norm=1.0)
-            self.actor_optimizer.step()
-
-            if self.wandb_run is not None:
-                self.wandb_run.log(
-                    {"train/policy_loss": policy_loss.item(),
-                     "train/policy_grad_norm": grad_norm,
-                     "time/policy_step_time": time.time() - start_time},
-                    step=self.steps_collected)
+        # ---- logs ----
+        if self.wandb_run is not None:
+            self.wandb_run.log({
+                "train_p/policy_loss": policy_loss.item(),
+                "train_p/rtg_c_mean": returns.mean().item(),
+                "train_p/rtg_c_max": returns.max().item(),
+                "train_p/topk_mean": S_top.mean().item(),
+                "time/policy_step_time": time.time() - start_time
+            }, step=self.steps_collected)
 
         # Update the frozen target models
-        # for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
-        #     target_param.data.copy_(
-        #         self.tau * param.data + (1 - self.tau) * target_param.data)
+        for param, target_param in zip(self.distance.parameters(), self.distance_target.parameters()):
+            target_param.data.copy_(
+                self.tau * param.data + (1 - self.tau) * target_param.data)
+        for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
+            target_param.data.copy_(
+                self.tau * param.data + (1 - self.tau) * target_param.data)
 
     def evaluate_policy(self):
         total_reward = 0.0
@@ -318,46 +352,60 @@ class DistanceAgent:
         print(
             f"[Eval.] Reward {avg_reward:10.2f}, Steps: {np.mean(ep_steps):6.1f}")  # (Episodes: {self.eval_episodes})")
 
+        if avg_reward > self.best_reward:
+            self.best_reward = avg_reward
+            print(f"  New best reward!")
+            self.save(self.model_save_path + f"/best")            
+
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
+                                "eval/best_reward": self.best_reward,
                                 "eval/avg_ep_length": np.mean(ep_steps)},
                                step=self.steps_collected)
-        return avg_reward
+            
+    def save(self, filename):
+        torch.save(self.actor.state_dict(), filename + "_actor.pth")
+        torch.save(self.distance.state_dict(), filename + "_distance.pth")
+        
+        save_path = '/'.join(filename.split('/')[:-1])
+        print(f"Model saved to {save_path}/")
 
     def train(self):
         self.steps_collected = 0
+        self.steps_since_eval = 0
         env_step = 0
+        ep_reward = 0
+        self.best_reward = -float('inf')
 
-        obs, _ = self.env.reset()
-
-        action_traj = torch.zeros(
-            (self.max_episode_steps, self.act_dim)).to(self.device)
-        state_traj = torch.zeros(
-            (self.max_episode_steps, self.obs_dim)).to(self.device)
-        done_traj = torch.zeros((self.max_episode_steps, 1)).to(self.device)
-        reward_traj = torch.zeros((self.max_episode_steps, 1)).to(self.device)
-
-        self.evaluate_policy()
+        obs, _ = self.env.reset(seed=self.seed)        
 
         while self.steps_collected < self.total_steps:
 
             action = self.get_action(obs)
-            noise = np.random.normal(0, 0.1, size=action.shape)
-            action = (action + noise).clip(
-                self.env.action_space.low, self.env.action_space.high)
+
+            if self.noise_type == "OU":
+                # Update sigma and use Ornstein-Uhlenbeck noise
+                self.ou_noise.set_sigma(self.expl_sigma)
+                noise = self.ou_noise.sample()
+            elif self.noise_type == "Sched":
+                # use scheduled Gaussian noise
+                self.expl_sigma = self._exploration_sigma()   # decays 0.3 → 0.05
+                noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
+            else:
+                noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
+
+            # per-dimension clip to env bounds
+            low, high = self.env.action_space.low, self.env.action_space.high
+            action = np.clip(action + noise, low, high)
 
             next_obs, reward, done, truncated, _ = self.env.step(action)
 
-            action_traj[env_step] = torch.tensor(
-                action, dtype=torch.float32, device=self.device)
-            state_traj[env_step] = torch.tensor(
-                obs, dtype=torch.float32, device=self.device)
-            done_traj[env_step] = torch.tensor(
-                done, dtype=torch.float32, device=self.device)
-            reward_traj[env_step] = torch.tensor(
-                reward, dtype=torch.float32, device=self.device)
+            ep_reward += reward
+
+            self.buffer.add(obs, next_obs, action, reward, done)
 
             self.steps_collected += 1
+            self.steps_since_eval += 1
             env_step += 1
 
             # Train distance model
@@ -368,31 +416,33 @@ class DistanceAgent:
             if self.steps_collected > self.policy_training_start:
                 self.train_policy()
 
+            if self.steps_since_eval >= self.eval_freq and self.steps_collected > self.policy_training_start:
+                self.evaluate_policy()
+                self.steps_since_eval = 0
+
             obs = next_obs
 
             if done or truncated:
-                print(
-                    f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {reward_traj[:env_step].sum().item():10.2f}, Steps: {np.mean(env_step):6.1f}")
+                if self.steps_collected < self.policy_training_start:
+                    print(
+                        f"[Collect: {self.steps_collected}/{self.policy_training_start:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
+                else:
+                    print(
+                        f"[Train: {self.steps_collected}/{self.total_steps:<5d}] Reward {ep_reward:10.2f}, Steps: {np.mean(env_step):6.1f}")
 
                 if self.wandb_run is not None:
                     self.wandb_run.log(
-                        {"rollout/ep_reward": reward_traj[:env_step].sum().item(),
-                         "rollout/ep_length": env_step},
+                        {"rollout/ep_reward": ep_reward,
+                         "rollout/ep_length": env_step,
+                         "rollout/sigma": self.expl_sigma},
                         step=self.steps_collected)
 
-                self.buffer.add(
-                    state_traj, action_traj, reward_traj, done_traj, env_step
-                )
-
                 env_step = 0
+                ep_reward = 0
                 obs, _ = self.env.reset()
-                action_traj = torch.zeros(
-                    (self.max_episode_steps, self.act_dim)).to(self.device)
-                state_traj = torch.zeros(
-                    (self.max_episode_steps, self.obs_dim)).to(self.device)
-                done_traj = torch.zeros(
-                    (self.max_episode_steps, 1)).to(self.device)
-                reward_traj = torch.zeros(
-                    (self.max_episode_steps, 1)).to(self.device)
+                self.ou_noise.reset()  # Reset OU noise for new episode
 
-                eval_reward = self.evaluate_policy()
+        # Final evaluation
+        self.evaluate_policy()
+        self.save(self.model_save_path + f"/final")
+        wandb.finish()        

@@ -1,0 +1,357 @@
+# DistRL Hyperparameters for Various Environments
+# This file contains tuned hyperparameters for the Distance-based RL agent
+
+# =============================================================================
+# Classic Control Environments
+# =============================================================================
+
+Pendulum-v1:
+  # Environment settings
+  total_steps: 200000
+  buffer_size: 300000
+  K: 16                           # n-step for recursive distance learning
+  v_gamma: 1.0                    # gamma shape parameter for distance metric
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096              # comparison samples for policy training
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3                 # initial exploration noise
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 5
+  eval_freq: 10000
+  
+  # Return configuration
+  rtg_enabled: true               # use reward-to-go instead of n-step returns
+  
+  # Advanced settings
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005                      # target network update rate
+
+MountainCarContinuous-v0:
+  total_steps: 200_000
+  buffer_size: 200_000
+  K: 128 # 128 >
+  v_gamma: 2
+  hidden_size: 256
+  lr: 0.0002
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  policy_training_start: 10000
+  val_training_start: 10000
+  expl_sigma: 0.5 # Very important! 
+  noise_type: "OU"
+  eval_episodes: 5
+  eval_freq: 5000
+  rtg_enabled: False
+  discount: 0.99
+  tau: 0.005
+
+LunarLanderContinuous-v3:
+  total_steps: 500_000
+  buffer_size: 300_000
+  K: 128
+  v_gamma: 2
+  hidden_size: 256
+  lr: 0.0002
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  policy_training_start: 10000
+  val_training_start: 10000
+  expl_sigma: 0.3 
+  noise_type: "Sched"
+  eval_episodes: 10
+  eval_freq: 1000
+  rtg_enabled: False
+  discount: 0.99
+  tau: 0.005
+
+
+# =============================================================================
+# MuJoCo Environments (Continuous Control)
+# =============================================================================
+
+HalfCheetah-v4:
+  # Environment settings
+  total_steps: 1000000
+  buffer_size: 1000000
+  
+  # Distance learning settings
+  K: 8                            # shorter horizon for faster locomotion
+  v_gamma: 0.5                    # lower gamma for smoother distance metric
+  
+  # Network architecture
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 10
+  eval_freq: 50000
+  
+  # Return configuration
+  rtg_enabled: true
+  
+  # Advanced settings
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005
+
+Hopper-v4:
+  # Environment settings
+  total_steps: 1000000
+  buffer_size: 1000000
+  
+  # Distance learning settings
+  K: 16
+  v_gamma: 1.0
+  
+  # Network architecture
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 10
+  eval_freq: 50000
+  
+  # Return configuration
+  rtg_enabled: true
+  
+  # Advanced settings
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005
+
+Walker2d-v4:
+  # Environment settings
+  total_steps: 1000000
+  buffer_size: 1000000
+  
+  # Distance learning settings
+  K: 16
+  v_gamma: 1.0
+  
+  # Network architecture
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 10
+  eval_freq: 50000
+  
+  # Return configuration
+  rtg_enabled: true
+  
+  # Advanced settings
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005
+
+Ant-v4:
+  # Environment settings
+  total_steps: 3000000
+  buffer_size: 1000000
+  
+  # Distance learning settings
+  K: 8
+  v_gamma: 0.5
+  
+  # Network architecture
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 10
+  eval_freq: 50000
+  
+  # Return configuration
+  rtg_enabled: true
+  
+  # Advanced settings
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005
+
+Humanoid-v4:
+  # Environment settings
+  total_steps: 5000000
+  buffer_size: 1000000
+  
+  # Distance learning settings
+  K: 16
+  v_gamma: 1.5                    # higher gamma for complex humanoid dynamics
+  
+  # Network architecture
+  hidden_size: 256
+  lr: 0.0003
+  
+  # Training settings
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  
+  # Training schedule
+  policy_training_start: 10000
+  val_training_start: 10000
+  
+  # Exploration
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  
+  # Evaluation
+  eval_episodes: 10
+  eval_freq: 50000
+  
+  # Return configuration
+  rtg_enabled: true
+  
+  # Advanced settings
+  dynamic_beta: true
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005
+
+# =============================================================================
+# Parameter Ablation Studies
+# =============================================================================
+
+# Recommended ranges for hyperparameter tuning:
+# 
+# K (n-step horizon):
+#   - Range: [4, 8, 16, 32]
+#   - Lower K: faster tasks, simpler dynamics
+#   - Higher K: long-horizon tasks, complex dependencies
+#
+# v_gamma (distance metric shape):
+#   - Range: [0.5, 1.0, 1.5, 2.0]
+#   - Lower gamma: smoother distance metric, better for continuous tasks
+#   - Higher gamma: sharper distinctions, better for sparse rewards
+#
+# batch_size:
+#   - Range: [64, 128, 256, 512]
+#   - Larger batches: more stable but slower
+#   - Smaller batches: faster updates but noisier
+#
+# comp_samples:
+#   - Range: [1024, 2048, 4096, 8192]
+#   - More samples: better neighbor selection but slower
+#   - Fewer samples: faster but less accurate
+#
+# learning_rate:
+#   - Range: [3e-5, 1e-4, 3e-4, 1e-3]
+#   - Standard: 3e-4 works well for most tasks
+#   - Adjust based on convergence speed
+#
+# hidden_size:
+#   - Range: [64, 128, 256, 512]
+#   - Larger networks: more capacity but slower
+#   - Smaller networks: faster but may underfit
+#
+# dynamic_beta:
+#   - true: adaptive weighting based on reward gaps
+#   - false: fixed beta value
+#   - Recommended: true for sparse rewards, false otherwise
+
+# =============================================================================
+# Default Configuration (if environment not specified)
+# =============================================================================
+
+default:
+  total_steps: 1000000
+  buffer_size: 500000
+  K: 16
+  v_gamma: 1.0
+  hidden_size: 256
+  lr: 0.0003
+  batch_size: 256
+  comp_samples: 4096
+  update_epochs_policy: 1
+  update_epochs_val: 1
+  policy_training_start: 10000
+  val_training_start: 10000
+  expl_sigma: 0.3
+  noise_type: "ornstein-uhlenbeck"
+  eval_episodes: 10
+  eval_freq: 20000
+  rtg_enabled: true
+  dynamic_beta: false
+  beta: 5.0
+  discount: 0.99
+  tau: 0.005

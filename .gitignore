@@ -210,3 +210,4 @@ wandb/
 run_tmp.sh
 slurm_logs/
 logs/
+saved_models/

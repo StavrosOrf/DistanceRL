@@ -15,7 +15,7 @@ eval_episodes = 10
 v_gamma = 2.0
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
-for algo in ['RTGRecDistRL']:
+for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['MountainCarContinuous-v0']:
         if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
             continue
@@ -23,8 +23,8 @@ for algo in ['RTGRecDistRL']:
             for K in [64, 128, 256, 512]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:
-                        for noise_type in ["Sched"]: # "OU", "Sched"
-                            for expl_sigma in [0.5]:
+                        for noise_type in ["OU"]: # "OU", "Sched", "Normal"
+                            for expl_sigma in [0.3, 0.5]:
                                 for lr in [2e-4]:
                                     for hidden_size in [256]:
                                         for seed in [42]:

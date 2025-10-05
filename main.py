@@ -7,19 +7,17 @@ import yaml
 import torch
 
 from dist_rl.distRL import DistanceAgent
-from dist_rl.recursive_distRL import RecDistanceAgent
-from dist_rl.stoch_rec_distRL import StochRecDistanceAgent
-from dist_rl.rtg_distRL import RTGRecDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
-from dist_rl.stoch_rtg_distRL import StochRTGRecDistanceAgent
-
+from dist_rl.stoch_distRL import StochasticDistanceAgent
+from dist_rl.utils import load_hyperparameters
 
 def main():
     parser = argparse.ArgumentParser()
 
-    # parser.add_argument("--env-id", type=str, default="MountainCarContinuous-v0")
     parser.add_argument("--env-id", type=str,
                         default="MountainCarContinuous-v0")
+    parser.add_argument("--optimal-run", action="store_true", default=False,
+                        help="If true, uses optimal hyperparameters for the environment.")
     # parser.add_argument("--env-id", type=str, default="Pendulum-v1")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
@@ -34,8 +32,9 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="RTGRecDistRL",)
-    parser.add_argument("--noise-type", type=str, default="Sched",)
+    parser.add_argument("--algo", type=str, default="DistRL")
+    parser.add_argument("--model-save-path", type=str, default="./saved_models/")
+    parser.add_argument("--noise-type", type=str, default="Scheduled")
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=2_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
@@ -76,10 +75,15 @@ def main():
         # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
         exp_prefix = args.algo + "_SB3_seed=" + \
-            str(args.seed) + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            str(args.seed) + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
     else:
-        exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
         group_name = args.group_name + args.env_id + "_testv1"
+            
+    model_save_path = Path(args.model_save_path) / exp_prefix
+    model_save_path.mkdir(parents=True, exist_ok=True)
+    args.model_save_path = str(model_save_path)    
+    
 
     if args.log_to_wandb:
         wandb_run = wandb.init(
@@ -104,16 +108,21 @@ def main():
     print("="*65)
     print(f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
     
+    #load optimal hyperparameters if specified
+    if args.optimal_run and args.algo in ["DistRL", "StochDistRL"]:
+        algo_name = args.algo.lower().replace("stoch", "stoch_").replace("dist", "dist_")
+        params = load_hyperparameters(args.env_id, algo_name)
+        print("Loaded optimal hyperparameters:")
+        print(params)
+        
+        args.__dict__.update(params)
+        print("Updated args:")
+        print(args.__dict__)
+
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
-    elif args.algo == "RecDistRL":
-        agent = RecDistanceAgent(**args.__dict__)
-    elif args.algo == "StochRecDistRL":        
-        agent = StochRecDistanceAgent(**args.__dict__)
-    elif args.algo == "RTGRecDistRL":        
-        agent = RTGRecDistanceAgent(**args.__dict__)
-    elif args.algo == "StochRTGRecDistRL":        
-        agent = StochRTGRecDistanceAgent(**args.__dict__)
+    elif args.algo == "StochDistRL":        
+        agent = StochasticDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 

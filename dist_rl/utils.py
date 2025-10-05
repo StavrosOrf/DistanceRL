@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from typing import Tuple
-
+import random
 
 class RolloutBuffer:
     def __init__(self, buffer_size: int, obs_dim: int, act_dim: int, device):
@@ -268,3 +268,73 @@ class RTGRolloutBuffer:
             self.rtg[idxs],
             self.nreturn[idxs],
         )
+        
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+
+class OrnsteinUhlenbeckNoise:
+    """Ornstein-Uhlenbeck process for temporally correlated exploration noise."""
+    def __init__(self, size, mu=0.0, theta=0.15, sigma=0.2, dt=1e-2):
+        self.size = size
+        self.mu = mu
+        self.theta = theta
+        self.sigma = sigma
+        self.dt = dt
+        self.state = None
+        self.reset()
+    
+    def reset(self):
+        self.state = np.ones(self.size) * self.mu
+    
+    def sample(self):
+        dx = self.theta * (self.mu - self.state) * self.dt + \
+             self.sigma * np.sqrt(self.dt) * np.random.randn(self.size)
+        self.state += dx
+        return self.state
+    
+    def set_sigma(self, sigma):
+        self.sigma = sigma
+
+def load_hyperparameters(env_id: str, agent_type: str = "distrl"):
+    """
+    Load hyperparameters from YAML file for a specific environment.
+    
+    Args:
+        env_id: Environment ID (e.g., "HalfCheetah-v4")
+        agent_type: Type of agent ("distrl" or "stoch_distrl")
+    
+    Returns:
+        Dictionary of hyperparameters
+    
+    Example:
+        >>> params = load_hyperparameters("HalfCheetah-v4", "distrl")
+        >>> agent = DistanceAgent(env_id="HalfCheetah-v4", **params)
+    """
+    import yaml
+    from pathlib import Path
+    
+    # Determine the path to the hyperparameters file
+    current_dir = Path(__file__).parent
+    hyperparam_file = current_dir / "hyperparams" / f"{agent_type}.yaml"
+    
+    if not hyperparam_file.exists():
+        print(f"Warning: Hyperparameter file {hyperparam_file} not found.")
+        print("Using default parameters.")
+        return {}
+    
+    # Load the YAML file
+    with open(hyperparam_file, 'r') as f:
+        all_hyperparams = yaml.safe_load(f)
+    
+    # Get parameters for the specific environment, or use defaults
+    if env_id in all_hyperparams:
+        params = all_hyperparams[env_id]
+        print(f"Loaded hyperparameters for {env_id} from {agent_type}.yaml")
+    else:
+        params = all_hyperparams.get('default', {})
+        print(f"Environment {env_id} not found in {agent_type}.yaml, using defaults")
+    
+    return params

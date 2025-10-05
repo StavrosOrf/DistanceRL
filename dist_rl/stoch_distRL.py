@@ -24,7 +24,7 @@ def set_seed(seed: int):
     torch.cuda.manual_seed_all(seed)
 
 
-class StochRTGRecDistanceAgent:
+class StochasticDistanceAgent:
     def __init__(
         self,
         env_id,
