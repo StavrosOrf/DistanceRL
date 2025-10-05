@@ -7,15 +7,15 @@ import yaml
 import torch
 
 from dist_rl.distRL import DistanceAgent
-from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.stoch_distRL import StochasticDistanceAgent
+from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
 
 def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--env-id", type=str,
-                        default="MountainCarContinuous-v0")
+                        default="Hopper-v5")
     parser.add_argument("--optimal-run", action="store_true", default=False,
                         help="If true, uses optimal hyperparameters for the environment.")
     # parser.add_argument("--env-id", type=str, default="Pendulum-v1")

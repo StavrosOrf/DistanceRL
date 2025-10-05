@@ -1,0 +1,7 @@
+torch
+wandb
+gymnasium
+stable_baselines3[extra]
+swig
+gymnasium[box2d]
+gymnasium[mujoco]
