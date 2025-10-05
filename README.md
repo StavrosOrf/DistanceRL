@@ -164,18 +164,6 @@ Hyperparameters for classic baselines live in `classic_rl/hyperparams/<algo>.yam
 ---
 
 ## Citation
-If you build upon this repository, please cite:
-
-```bibtex
-@software{DistanceRL2024,
-  author  = {Stavros Orfanos and contributors},
-  title   = {DistanceRL: Distance-Guided Reinforcement Learning},
-  year    = {2024},
-  url     = {https://github.com/stavrosorf/DistanceRL}
-}
-```
+--
 
 ---
-
-## Acknowledgements
-DistRL draws inspiration from retrieval-augmented RL and metric learning literature. Feedback and contributions are welcome—feel free to open issues or pull requests!
