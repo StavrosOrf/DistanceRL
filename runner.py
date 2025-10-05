@@ -14,15 +14,15 @@ device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 v_gamma = 2.0
 
-# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
+# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
 for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
-    for env in ['MountainCarContinuous-v0']:
-        if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
-            continue
+    for env in ['Hopper-v5']:  # 'Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3',
+        # if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
+        #     continue
         for batch_size in [256]:
-            for K in [64, 128, 256, 512]:
+            for K in [1]:
                 for comp_samples in [4096]:
-                    for rtg_enabled in [False]:
+                    for rtg_enabled in [True]:
                         for noise_type in ["OU"]: # "OU", "Sched", "Normal"
                             for expl_sigma in [0.3, 0.5]:
                                 for lr in [2e-4]:
