@@ -1,19 +1,166 @@
-Pendulum-v1:
-  total_steps: 200000
+# td3.yaml — SB3-style presets
+# TD3 tricks: target policy smoothing, delayed policy update, twin critics
+Ant-v5:
+  total_steps: 1000000
   buffer_size: 1000000
   batch_size: 256
-  start_timesteps: 25000
+  start_timesteps: 10000
   expl_noise: 0.1
   policy_noise: 0.2
   noise_clip: 0.5
   policy_freq: 2
   gamma: 0.99
   tau: 0.005
-  actor_lr: 0.0003
-  critic_lr: 0.0003
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
+
+HalfCheetah-v5:
+  total_steps: 1000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
+
+Hopper-v5:
+  total_steps: 1000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
+
+Humanoid-v5:
+  total_steps: 3000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 50000
+  eval_episodes: 10
+
+InvertedDoublePendulum-v5:
+  total_steps: 500000
+  buffer_size: 500000
+  batch_size: 256
+  start_timesteps: 5000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
   hidden_size: 256
   eval_interval: 10000
-  eval_episodes: 5
+  eval_episodes: 10
+
+InvertedPendulum-v5:
+  total_steps: 300000
+  buffer_size: 300000
+  batch_size: 256
+  start_timesteps: 5000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 10
+
+Reacher-v5:
+  total_steps: 500000
+  buffer_size: 500000
+  batch_size: 256
+  start_timesteps: 5000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.98
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 10
+
+Swimmer-v5:
+  total_steps: 1000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
+
+Walker2d-v5:
+  total_steps: 1000000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 10000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.99
+  tau: 0.005
+  actor_lr: 0.001
+  critic_lr: 0.001
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 20000
+  eval_episodes: 10
 
 LunarLanderContinuous-v3:
   total_steps: 1000000
@@ -28,15 +175,34 @@ LunarLanderContinuous-v3:
   tau: 0.005
   actor_lr: 0.0003
   critic_lr: 0.0003
+  policy: "MlpPolicy"
   hidden_size: 400
   eval_interval: 20000
   eval_episodes: 10
 
 MountainCarContinuous-v0:
   total_steps: 300000
-  buffer_size: 500000
+  buffer_size: 100000
   batch_size: 256
-  start_timesteps: 10000
+  start_timesteps: 1000
+  expl_noise: 0.1
+  policy_noise: 0.2
+  noise_clip: 0.5
+  policy_freq: 2
+  gamma: 0.999
+  tau: 0.005
+  actor_lr: 0.0003
+  critic_lr: 0.0003
+  policy: "MlpPolicy"
+  hidden_size: 256
+  eval_interval: 10000
+  eval_episodes: 10
+
+Pendulum-v1:
+  total_steps: 300000
+  buffer_size: 1000000
+  batch_size: 256
+  start_timesteps: 1000
   expl_noise: 0.1
   policy_noise: 0.2
   noise_clip: 0.5
@@ -45,6 +211,7 @@ MountainCarContinuous-v0:
   tau: 0.005
   actor_lr: 0.0003
   critic_lr: 0.0003
+  policy: "MlpPolicy"
   hidden_size: 256
   eval_interval: 10000
-  eval_episodes: 5
+  eval_episodes: 10

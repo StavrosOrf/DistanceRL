@@ -29,11 +29,11 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
         # if env in ['CartPole-v1'] and algo in ['RTGRecDistRL']:
         #     continue
         for batch_size in [256]:
-            for K in [128, 256, 512]:
+            for K in [512]:
                 for comp_samples in [4096]:
-                    for rtg_enabled in [False]:                        
-                        for noise_type in ["OU"]: # "OU", "Sched", "Normal"
-                            for expl_sigma in [0.3, 0.5]:
+                    for rtg_enabled in [True]:                        
+                        for noise_type in ["Normal", "Sched"]: # "OU", "Sched", "Normal"
+                            for expl_sigma in [0.1, 0.2, 0.3]:  # 0.1, 0.2, 0.3
                                 for lr in [2e-4]:
                                     for hidden_size in [256]:
                                         for seed in [42]:

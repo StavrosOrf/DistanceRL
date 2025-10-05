@@ -1,6 +1,5 @@
-# sac.yaml — SB3-style presets (largely RL-Zoo defaults/tunes)
-# Values not present in SB3 constructor fall back to library defaults.
-# policy: MlpPolicy (tanh-squashed Gaussian)
+# tqc.yaml — SB3-Contrib TQC presets (SAC-family with truncated quantiles)
+# Additional keys beyond SAC: n_critics, n_quantiles, top_quantiles_to_drop_per_net
 Ant-v5:
   total_steps: 1000000
   buffer_size: 1000000
@@ -13,6 +12,9 @@ Ant-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -30,6 +32,9 @@ HalfCheetah-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -47,6 +52,9 @@ Hopper-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -64,6 +72,9 @@ Humanoid-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 50000
@@ -81,6 +92,9 @@ InvertedDoublePendulum-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 10000
@@ -98,6 +112,9 @@ InvertedPendulum-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 10000
@@ -115,6 +132,9 @@ Reacher-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 10000
@@ -132,6 +152,9 @@ Swimmer-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -149,6 +172,9 @@ Walker2d-v5:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -166,6 +192,9 @@ LunarLanderContinuous-v3:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 20000
@@ -183,6 +212,9 @@ MountainCarContinuous-v0:
   train_freq: 32
   gradient_steps: 32
   ent_coef: 0.1
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [64, 64]
   eval_interval: 10000
@@ -200,6 +232,9 @@ Pendulum-v1:
   train_freq: 1
   gradient_steps: 1
   ent_coef: "auto"
+  n_critics: 2
+  n_quantiles: 25
+  top_quantiles_to_drop_per_net: 5
   policy: "MlpPolicy"
   net_arch: [256, 256]
   eval_interval: 10000
