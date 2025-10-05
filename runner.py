@@ -31,41 +31,43 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
         for batch_size in [256]:
             for K in [512]:
                 for comp_samples in [4096]:
-                    for rtg_enabled in [True]:                        
+                    for rtg_enabled in [False]:                        
                         for noise_type in ["OU", "Sched"]: # "OU", "Sched", "Normal"
                             for expl_sigma in [0.1, 0.2, 0.3]:  # 0.1, 0.2, 0.3
-                                for lr in [2e-4]:
-                                    for hidden_size in [256]:
-                                        for seed in [42]:
-                                            
-                                            extra = " --rtg-enabled" if rtg_enabled else ""
-                                            
-                                            name = f"{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
+                                for top_k in [32,64]:  # 2, 8, 32, 64
+                                    for lr in [2e-4]:
+                                        for hidden_size in [256]:
+                                            for seed in [42]:
+                                                
+                                                extra = " --rtg-enabled" if rtg_enabled else ""
+                                                
+                                                name = f"{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
 
-                                            name = f'rtg_enabled={rtg_enabled}-expl_sigma={expl_sigma}-noise_type={noise_type}' + '-' + name
-                                            
-                                            command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
-                                                f' --env-id {env}' + \
-                                                f' --algo {algo}' + \
-                                                f' --device {device}' + \
-                                                f' --batch-size {batch_size}' + \
-                                                f' --K {K}' + \
-                                                f' --v_gamma {v_gamma}' + \
-                                                f' --lr {lr}' + \
-                                                f' --hidden-size {hidden_size}' + \
-                                                f' --buffer-size 500_000' + \
-                                                f' --seed {seed}' + \
-                                                f' --exp-prefix {name}' + \
-                                                f' --eval-episodes {eval_episodes}' + \
-                                                f' --policy-training-start 10_000' + \
-                                                f' --val-training-start 10_000' + \
-                                                f' --comp-samples {comp_samples}' + \
-                                                f' --noise-type {noise_type}' + \
-                                                ' --log_to_wandb' + \
-                                                f' --expl-sigma {expl_sigma}' + \
-                                                extra + \
-                                                '" Enter'
+                                                name = f'rtg_enabled={rtg_enabled}-expl_sigma={expl_sigma}-noise_type={noise_type}' + '-' + name
+                                                
+                                                command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+                                                    f' --env-id {env}' + \
+                                                    f' --algo {algo}' + \
+                                                    f' --device {device}' + \
+                                                    f' --batch-size {batch_size}' + \
+                                                    f' --K {K}' + \
+                                                    f' --v_gamma {v_gamma}' + \
+                                                    f' --top-k {top_k}' + \
+                                                    f' --lr {lr}' + \
+                                                    f' --hidden-size {hidden_size}' + \
+                                                    f' --buffer-size 500_000' + \
+                                                    f' --seed {seed}' + \
+                                                    f' --exp-prefix {name}' + \
+                                                    f' --eval-episodes {eval_episodes}' + \
+                                                    f' --policy-training-start 10_000' + \
+                                                    f' --val-training-start 10_000' + \
+                                                    f' --comp-samples {comp_samples}' + \
+                                                    f' --noise-type {noise_type}' + \
+                                                    ' --log_to_wandb' + \
+                                                    f' --expl-sigma {expl_sigma}' + \
+                                                    extra + \
+                                                    '" Enter'
 
-                                            os.system(command=command)
-                                            print(command)
-                                            time.sleep(3)
+                                                os.system(command=command)
+                                                print(command)
+                                                time.sleep(3)

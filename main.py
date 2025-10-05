@@ -36,7 +36,7 @@ def main():
     parser.add_argument("--model-save-path", type=str, default="./saved_models/")
     parser.add_argument("--noise-type", type=str, default="Scheduled")
     parser.add_argument("--K", type=int, default=16)
-    parser.add_argument("--total-steps", type=int, default=2_000_000)
+    parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--comp-samples", type=int, default=4096)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
     parser.add_argument("--q-percentile", type=float, default=0.7)
-    parser.add_argument("--top-k", type=int, default=2)
+    parser.add_argument("--top-k", type=int, default=3)
     parser.add_argument("--v_gamma", type=float, default=1)
     parser.add_argument("--beta", type=float, default=5.0)
     parser.add_argument("--value-model-type", type=str, default="LSTM",

@@ -34,6 +34,7 @@ class DistanceAgent:
         lr=3e-4,
         expl_sigma=0.3,
         hidden_size=64,
+        top_k=32,
         device="cpu",
         noise_type="OU",  # "OU" or "scheduled Gaussian"
         wandb_run=None,
@@ -90,7 +91,8 @@ class DistanceAgent:
             ("Eval Frequency", eval_freq),
             ("V Gamma", v_gamma),
             ("Noise Type", noise_type),
-            ("Model Save Path", model_save_path),            
+            ("Top K", top_k),
+            ("Model Save Path", model_save_path),
         ]
 
         # Print in three columns
@@ -137,11 +139,13 @@ class DistanceAgent:
             n_step=K,
             device=self.device,
         )
-        
+
         self.model_save_path = model_save_path
 
         self.seed = seed
         self.K = K
+        self.top_k = top_k
+        self.steps_collected = 0
         self.distance_training_start = val_training_start
         self.total_steps = total_steps
         self.update_epochs_policy = update_epochs_policy
@@ -243,14 +247,10 @@ class DistanceAgent:
         - Embed all candidates z_c = distance(s_c, a_c) (no-grad).
         - Select top-K neighbors per row by cosine(z_i, z_c).
         - Convert their RTGs to a row-wise target distribution P_tgt.
-        - Convert similarities to P_pre.
+        - Convert similarities to P_pred.
         - Minimize CE(P_tgt || P_pred).
         """
         start_time = time.time()
-
-        # ---- hyperparams ----
-        # number of cosine-nearest neighbors per row
-        K = min(32, self.batch_size // 2)
 
         # ---- sample current batch & large candidate pool ----
         obs, _, _, _, _, _, _ = self.buffer.get_batch(self.batch_size)
@@ -278,7 +278,7 @@ class DistanceAgent:
 
         # ---- cosine similarities & top-K selection by cosine ----
         S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
-        K_eff = min(K, S_full.size(1))
+        K_eff = min(self.top_k, S_full.size(1))
         top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
 
         # gather per-row top-K candidates
@@ -297,6 +297,12 @@ class DistanceAgent:
         S_shift = S_top - S_top.max(dim=1, keepdim=True).values
         # [B,K]
         P_pred = torch.softmax(S_shift, dim=1)
+        
+        # print(f'p_pred: {P_pred}')
+        # print(f'p_tgt: {P_tgt}')
+        # print(f'P_pred.clamp_min(eps).log(): {P_pred.clamp_min(1e-8).log()}')                
+        # print(f'ce: {(P_tgt * (P_pred.clamp_min(1e-8).log()))}')
+        # print(f'ce2: {(P_tgt * (P_pred.clamp_min(1e-8).log())).sum(dim=1)}\n')
 
         # ---- main loss: cross-entropy CE(P_tgt || P_pred) ----
         eps = 1e-8
@@ -355,29 +361,28 @@ class DistanceAgent:
         if avg_reward > self.best_reward:
             self.best_reward = avg_reward
             print(f"  New best reward!")
-            self.save(self.model_save_path + f"/best")            
+            self.save(self.model_save_path + f"/best")
 
         if self.wandb_run is not None:
             self.wandb_run.log({"eval/avg_reward": avg_reward,
                                 "eval/best_reward": self.best_reward,
                                 "eval/avg_ep_length": np.mean(ep_steps)},
                                step=self.steps_collected)
-            
+
     def save(self, filename):
         torch.save(self.actor.state_dict(), filename + "_actor.pth")
         torch.save(self.distance.state_dict(), filename + "_distance.pth")
-        
+
         save_path = '/'.join(filename.split('/')[:-1])
         print(f"Model saved to {save_path}/")
 
     def train(self):
-        self.steps_collected = 0
         self.steps_since_eval = 0
         env_step = 0
         ep_reward = 0
         self.best_reward = -float('inf')
 
-        obs, _ = self.env.reset(seed=self.seed)        
+        obs, _ = self.env.reset(seed=self.seed)
 
         while self.steps_collected < self.total_steps:
 
@@ -445,4 +450,4 @@ class DistanceAgent:
         # Final evaluation
         self.evaluate_policy()
         self.save(self.model_save_path + f"/final")
-        wandb.finish()        
+        wandb.finish()
