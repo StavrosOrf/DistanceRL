@@ -402,7 +402,7 @@ class DistanceAgent:
 
             ep_reward += reward
 
-            self.buffer.add(obs, next_obs, action, reward, done)
+            self.buffer.add(obs, next_obs, action, reward, done or truncated)
 
             self.steps_collected += 1
             self.steps_since_eval += 1

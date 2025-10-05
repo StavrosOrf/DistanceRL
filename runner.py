@@ -32,7 +32,7 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
             for K in [512]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [True]:                        
-                        for noise_type in ["Normal", "Sched"]: # "OU", "Sched", "Normal"
+                        for noise_type in ["OU", "Sched"]: # "OU", "Sched", "Normal"
                             for expl_sigma in [0.1, 0.2, 0.3]:  # 0.1, 0.2, 0.3
                                 for lr in [2e-4]:
                                     for hidden_size in [256]:
