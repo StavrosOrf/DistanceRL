@@ -43,12 +43,45 @@ class Distance(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
         )
+        
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
         # Concatenate observations and actions for distance computation
         x = torch.cat([obs, actions], dim=-1)
         return self.dist(x)
+    
+class DistanceTwin(nn.Module):
+    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64):
+        super().__init__()
+        self.dist = nn.Sequential(
+            nn.Linear(obs_dim + act_dim, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        
+        self.dist_2 = nn.Sequential(
+            nn.Linear(obs_dim + act_dim, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+            # nn.LayerNorm(hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
 
+    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        # Concatenate observations and actions for distance computation
+        x = torch.cat([obs, actions], dim=-1)
+        return self.dist(x), self.dist_2(x)
+    
+    def f_1(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
+        # Concatenate observations and actions for distance computation
+        x = torch.cat([obs, actions], dim=-1)
+        return self.dist(x)
 
 LOG_STD_MIN = -20.0
 LOG_STD_MAX =  2.0

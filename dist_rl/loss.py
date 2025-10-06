@@ -236,3 +236,73 @@ def recursive_nstep_cosine_loss(
         "mean_cos": float(S[mask].mean()),
     }
     return loss, info
+
+
+def recursive_nstep_twin_cosine_loss(
+    embeddings: torch.Tensor,          # z(s,a)
+    next_embeddings: torch.Tensor,     # z(s', π_targ(s'))
+    dones: torch.Tensor,               # (B,)
+    # (B,)  # <-- use n-step returns, not RTG
+    nreturns: torch.Tensor,
+    discount: float = 0.99,
+    # the n used in nreturns (for logging only)
+    n: int = 20,
+    gamma_shape: float = 1.0,          # your v_gamma: sharpness in t(Δ)=1-2Δ^γ
+    lam: float = 0.5,                  # bootstrap mixing
+    huber_delta: float = 0.2,
+    eps: float = 1e-8,
+) -> Tuple[torch.Tensor, dict]:
+    
+    emb1, emb2 = embeddings
+    next_emb1, next_emb2 = next_embeddings
+
+    B = emb1.size(0)
+    z1 = F.normalize(emb1, p=2, dim=1)
+    z2 = F.normalize(emb2, p=2, dim=1)
+    z_next1 = F.normalize(next_emb1, p=2, dim=1)
+    z_next2 = F.normalize(next_emb2, p=2, dim=1)
+
+    S1 = z1 @ z1.T                        # (B,B)
+    S2 = z2 @ z2.T                        # (B,B)            
+    
+    S_next1 = z_next1 @ z_next1.T              # (B,B)
+    S_next2 = z_next2 @ z_next2.T              # (B,B)
+    
+    # (B,B) - take the minimum similarity between the two critics
+    S_next = torch.min(S_next1, S_next2)
+
+    # Pairwise future-aware gaps from n-step returns
+    u = nreturns.view(-1, 1)
+    G = (u - u.T).abs()                    # (B,B)
+
+    # Robust scale β: 95th percentile per batch (avoids hand-tuning)
+    with torch.no_grad():
+        beta = torch.quantile(G.reshape(-1), 0.95) + 1e-6
+    Delta = (G / beta).clamp(0., 1.)
+
+    # Target cosine from gap
+    T = 1.0 - 2.0 * (Delta ** float(gamma_shape))    # in [-1,1]
+
+    # Bootstrap toward next similarities (mask terminals on the "row")
+    alive = (1.0 - dones.view(-1, 1)).to(S1.dtype)
+    # Y = (1.0 - lam) * T + lam * alive * (discount * S_next)
+    Y = T + lam * alive * (discount * S_next - 1.0)
+
+    # Exclude diagonal; use Huber for robustness
+    mask = torch.ones((B, B), dtype=torch.bool, device=S1.device)
+    mask.fill_diagonal_(False)
+    err = (S1 - Y)[mask]
+    err += (S2 - Y)[mask]
+    loss = F.smooth_l1_loss(err, torch.zeros_like(
+        err), beta=huber_delta, reduction='mean')
+
+    info = {
+        "beta": float(beta),
+        "mean_gap": float(G[mask].mean()),
+        "mean_delta": float(Delta[mask].mean()),
+        "mean_targets": float(Y[mask].mean()),
+        "mean_cos": float(S1[mask].mean()),
+        "mean_cos2": float(S2[mask].mean()),
+    }
+    return loss, info
+

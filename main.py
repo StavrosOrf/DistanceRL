@@ -6,7 +6,8 @@ import wandb
 import yaml
 import torch
 
-from dist_rl.distRL import DistanceAgent
+from dist_rl.twin_distRL import DistanceAgent
+# from dist_rl.distRL import DistanceAgent
 from dist_rl.stoch_distRL import StochasticDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
@@ -34,7 +35,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="tqc")
+    parser.add_argument("--algo", type=str, default="DistRL")
     # parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--model-save-path", type=str, default="./saved_models/")
     parser.add_argument("--noise-type", type=str, default="Scheduled")
@@ -121,7 +122,7 @@ def main():
         print("Updated args:")
         print(args.__dict__)
 
-    if args.algo == "DistRL":
+    if args.algo == "DistRL":        
         agent = DistanceAgent(**args.__dict__)
     elif args.algo == "StochDistRL":        
         agent = StochasticDistanceAgent(**args.__dict__)

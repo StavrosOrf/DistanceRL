@@ -10,8 +10,8 @@ import random
 import wandb
 import time
 
-from dist_rl.models import Actor, Distance
-from dist_rl.loss import recursive_nstep_cosine_loss
+from dist_rl.models import Actor, DistanceTwin
+from dist_rl.loss import recursive_nstep_twin_cosine_loss
 from dist_rl.utils import (RTGRolloutBuffer,
                            OrnsteinUhlenbeckNoise,
                            set_seed)
@@ -67,7 +67,7 @@ class DistanceAgent:
 
         # Print algorithm configuration in three columns
         print("\n" + "="*70)
-        print(" "*10 + f"TRAINING CONFIGURATION for {env_id} with DistRL")
+        print(" "*10 + f"TRAINING CONFIGURATION for {env_id} with TwinCritic DistRL")
         print("="*70)
 
         # Prepare parameters in three columns
@@ -118,7 +118,7 @@ class DistanceAgent:
             min_action=min_action
         ).to(self.device)
 
-        self.distance = Distance(
+        self.distance = DistanceTwin(
             obs_dim=self.obs_dim,
             act_dim=self.act_dim,
             hidden_size=hidden_size,
@@ -215,7 +215,7 @@ class DistanceAgent:
                 d_embeddings_next = self.distance_target(
                     next_obs, next_actions)
                 
-            distance_loss, info = recursive_nstep_cosine_loss(
+            distance_loss, info = recursive_nstep_twin_cosine_loss(
                 embeddings=d_embeddings,
                 next_embeddings=d_embeddings_next,
                 dones=dones,
@@ -269,12 +269,12 @@ class DistanceAgent:
 
         # current actions and embeddings
         a_pred = self.actor(obs)                               # [B, A]
-        z_i = self.distance(obs, a_pred)                    # [B, H]
+        z_i = self.distance.f_1(obs, a_pred)                    # [B, H]
         z_i = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
 
         # candidate embeddings (no-grad)
         with torch.no_grad():
-            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = self.distance.f_1(obs_c, act_c)                  # [M, H]
             z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
         # ---- cosine similarities & top-K selection by cosine ----
@@ -357,12 +357,12 @@ class DistanceAgent:
 
         # current actions and embeddings
         a_pred = self.actor(obs)                               # [B, A]
-        z_i = self.distance(obs, a_pred)                    # [B, H]
+        z_i = self.distance.f_1(obs, a_pred)                    # [B, H]
         z_i = nn.functional.normalize(z_i, p=2, dim=1)      # cosine
 
         # candidate embeddings (no-grad)
         with torch.no_grad():
-            z_c = self.distance(obs_c, act_c)                  # [M, H]
+            z_c = self.distance.f_1(obs_c, act_c)                  # [M, H]
             z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
         # ---- cosine similarities & top-K selection by cosine ----
@@ -506,7 +506,7 @@ class DistanceAgent:
                 self.train_distance()
 
             # Training policy
-            if self.steps_collected > self.policy_training_start:
+            if self.steps_collected > self.policy_training_start and self.steps_collected % 2 == 0:
                 self.train_policy_reward_only()
 
             if self.steps_since_eval >= self.eval_freq and self.steps_collected > self.policy_training_start:
