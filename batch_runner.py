@@ -9,7 +9,7 @@ srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --q
 import os
 import random
 
-partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
+partition = 'gpu-a100-small'  # gpu-a100 # gpu-a100-small # gpu, compute
 algo = 'DistRL'
 group_name = "NewPolicyAb_"
 eval_episodes = 10
@@ -20,14 +20,14 @@ if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
-for env in ['HalfCheetah-v5']:
+for env in ['Pendulum-v1', 'MountainCarContinuous-v0', 'LunarLanderContinuous-v3']:
         for batch_size in [256]:
-            for K in [256, 1000]:
-                for top_k in [32, 64, 128]:  # 2, 8, 32, 64
-                    for comp_samples in [2048, 4096, 8192]:
+            for K in [128]:
+                for top_k in [32, 64]:  # 2, 8, 32, 64
+                    for comp_samples in [4096]:
                         for rtg_enabled in [False]:
                             for noise_type in ["SchedOU"]:  # "OU", "Sched", "Normal"
-                                for expl_sigma in [0.2]:  # 0.1, 0.2, 0.3                                
+                                for expl_sigma in [0.2, 0.5]:  # 0.1, 0.2, 0.3                                
                                     for lr in [2e-4]:
                                         for hidden_size in [256]:
                                             for seed in [42]:
@@ -49,6 +49,9 @@ for env in ['HalfCheetah-v5']:
                                                     cpu_cores = 1
                                                     memory = '5300'  # memory per cpu core
                                                     batch_arg = '#SBATCH --gpus-per-task=1'
+                                                    
+                                                    if partition == 'gpu-a100-small':
+                                                        time = 4
 
                                                 device = 'cpu' if partition == 'compute' else 'cuda'  # cpu or cuda
 
@@ -72,6 +75,7 @@ for env in ['HalfCheetah-v5']:
                                                     f' --group-name {group_name}' + \
                                                     f' --noise-type {noise_type}' + \
                                                     ' --log_to_wandb' + \
+                                                    ' --lightweight_wandb' + \
                                                     f' --expl-sigma {expl_sigma}' + \
                                                     f' {extra}'
 
