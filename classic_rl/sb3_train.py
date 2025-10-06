@@ -104,7 +104,43 @@ def train_sb3_agent(algo,
                         "hidden_size", 256), config.get("hidden_size", 256)]),
                     seed=seed)
     else:
-        raise ValueError("Unknown algorithm")
+        # Add support for TQC (from sb3_contrib) as a drop-in off-policy option
+        if algo == "tqc":
+            try:
+                from sb3_contrib import TQC
+            except ImportError as e:
+                raise ImportError(
+                    "TQC requires 'stable-baselines3-contrib'. Install it with: `pip install stable-baselines3[extra] stable-baselines3-contrib`"
+                ) from e
+            policy_name = config.get("policy", "MlpPolicy")
+            net_arch = config.get("net_arch", [config.get("hidden_size", 256), config.get("hidden_size", 256)])
+
+            model = TQC(policy_name,
+                        env,
+                        verbose=1,
+                        device=device,
+                        tensorboard_log="./logs/",
+                        # common off-policy hyperparams
+                        buffer_size=config.get("buffer_size", 1000000),
+                        batch_size=config.get("batch_size", 256),
+                        learning_starts=config.get("learning_starts", config.get("start_steps", 100)),
+                        policy_kwargs=dict(net_arch=net_arch),
+                        gamma=config.get("gamma", 0.99),
+                        tau=config.get("tau", 0.005),
+                        learning_rate=config.get("actor_lr", config.get("learning_rate", 0.0003)),
+                        # TQC-specific args (legal parameters only)
+                        top_quantiles_to_drop_per_net=config.get("top_quantiles_to_drop_per_net", 2),
+                        train_freq=config.get("train_freq", 1),
+                        gradient_steps=config.get("gradient_steps", 1),
+                        target_update_interval=config.get("target_update_interval", 1),
+                        target_entropy=config.get("target_entropy", "auto"),
+                        ent_coef=config.get("ent_coef", "auto"),
+                        use_sde=config.get("use_sde", False),
+                        sde_sample_freq=config.get("sde_sample_freq", -1),
+                        use_sde_at_warmup=config.get("use_sde_at_warmup", False),
+                        seed=seed)
+        else:
+            raise ValueError("Unknown algorithm")
 
     model.learn(total_timesteps=config.get("total_steps", 1_000_000),
                 progress_bar=True,

@@ -11,6 +11,8 @@ from dist_rl.stoch_distRL import StochasticDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
 
+SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
+
 def main():
     parser = argparse.ArgumentParser()
 
@@ -32,7 +34,8 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistRL")
+    parser.add_argument("--algo", type=str, default="tqc")
+    # parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--model-save-path", type=str, default="./saved_models/")
     parser.add_argument("--noise-type", type=str, default="Scheduled")
     parser.add_argument("--K", type=int, default=16)
@@ -70,7 +73,7 @@ def main():
         print("CUDA is not available, switching to CPU.")
         args.device = "cpu"
 
-    if args.algo in ["ppo", "td3", "sac"]:
+    if args.algo in SB3_ALGOS:
         group_name = args.group_name + args.env_id + "_SB3"
         # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
@@ -89,8 +92,7 @@ def main():
         wandb_run = wandb.init(
             name=exp_prefix,
             group=group_name,
-            sync_tensorboard=True if args.algo in [
-                "ppo", "td3", "sac"] else False,
+            sync_tensorboard=True if args.algo in SB3_ALGOS else False,
             id=exp_prefix,
             project=args.project_name,
             entity='stavrosorf',
@@ -126,7 +128,7 @@ def main():
     else:
         agent = train_sb3_agent(**args.__dict__)
 
-    if args.algo not in ["ppo", "td3", "sac"]:
+    if args.algo not in SB3_ALGOS:
         agent.train()
 
 
