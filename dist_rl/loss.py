@@ -285,8 +285,8 @@ def recursive_nstep_twin_cosine_loss(
 
     # Bootstrap toward next similarities (mask terminals on the "row")
     alive = (1.0 - dones.view(-1, 1)).to(S1.dtype)
-    # Y = (1.0 - lam) * T + lam * alive * (discount * S_next)
-    Y = T + lam * alive * (discount * S_next - 1.0)
+    Y = (1.0 - lam) * T + lam * alive * (discount * S_next)
+    # Y = (1 - Delta) + lam * alive * (discount * S_next - 1.0)
 
     # Exclude diagonal; use Huber for robustness
     mask = torch.ones((B, B), dtype=torch.bool, device=S1.device)

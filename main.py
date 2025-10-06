@@ -79,9 +79,9 @@ def main():
         # args.device = "cpu"  # SB3 algorithms run on CPU by default
         args.log_to_wandb = True  # always log sb3 runs to wandb
         exp_prefix = args.algo + "_SB3_seed=" + \
-            str(args.seed) + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+            str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")
     else:
-        exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%Y%m%d_%H%M%S")
+        exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%m%d_%H%M%S")
         group_name = args.group_name + args.env_id + "_testv1"
             
     model_save_path = Path(args.model_save_path) / exp_prefix
