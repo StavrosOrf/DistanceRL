@@ -30,20 +30,20 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
         #     continue
         for batch_size in [256]:
             for K in [128, 512]:
-                for comp_samples in [4096]:
+                for comp_samples in [2048, 4096, 8192]:
                     for rtg_enabled in [False]:                        
-                        for noise_type in ["OU"]: # "OU", "Sched", "Normal"
-                            for expl_sigma in [0.1, 0.3]:  # 0.1, 0.2, 0.3
-                                for top_k in [32]:  # 2, 8, 32, 64
+                        for noise_type in ["SchedOU"]: # "OU", "Sched", "Normal"
+                            for expl_sigma in [0.3]:  # 0.1, 0.2, 0.3
+                                for top_k in [32, 64, 128]:  # 2, 8, 32, 64
                                     for lr in [2e-4]:
                                         for hidden_size in [256]:
                                             for seed in [42]:
                                                 
                                                 extra = " --rtg-enabled" if rtg_enabled else ""
                                                 
-                                                name = f"NewPolicyLoss_{algo}-K={K}-bs={batch_size}-lr={lr}-seed={seed}"
+                                                name = f"-K={K}-seed={seed}"
 
-                                                name = f'rtg_enabled={rtg_enabled}-expl_sigma={expl_sigma}-noise_type={noise_type}' + '-' + name
+                                                name = f'NewPolicyLoss_{algo}_s={expl_sigma}-noise_type={noise_type}_comp_samples={comp_samples}_topk={top_k}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

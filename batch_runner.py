@@ -11,7 +11,7 @@ import random
 
 partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
 algo = 'DistRL'
-group_name = "param_abl_"
+group_name = "NewPolicyAb_"
 eval_episodes = 10
 v_gamma = 2.0
 
@@ -26,7 +26,7 @@ for env in ['HalfCheetah-v5']:
                 for top_k in [32, 64, 128]:  # 2, 8, 32, 64
                     for comp_samples in [2048, 4096, 8192]:
                         for rtg_enabled in [False]:
-                            for noise_type in ["OU"]:  # "OU", "Sched", "Normal"
+                            for noise_type in ["SchedOU"]:  # "OU", "Sched", "Normal"
                                 for expl_sigma in [0.2]:  # 0.1, 0.2, 0.3                                
                                     for lr in [2e-4]:
                                         for hidden_size in [256]:
@@ -34,11 +34,11 @@ for env in ['HalfCheetah-v5']:
 
                                                 extra = " --rtg-enabled" if rtg_enabled else ""
 
-                                                run_name = f"{algo}-K={K}-top_k={top_k}-noise_type={noise_type}-s={expl_sigma}-lr={lr}-hs={hidden_size}-seed={seed}"
+                                                run_name = f"{algo}-K={K}-top_k={top_k}-comp_samples={comp_samples}-noise_type={noise_type}-s={expl_sigma}-lr={lr}-hs={hidden_size}-seed={seed}"
 
                                                 run_name += str(random.randint(0, 100000))
                                                 print(f"Running {run_name}")
-                                                time = '23'  # in hours
+                                                time = '12'  # in hours
 
                                                 if partition == 'compute':
                                                     cpu_cores = 2
@@ -92,7 +92,7 @@ for env in ['HalfCheetah-v5']:
 ''' + \
                                     f'#SBATCH --mem-per-cpu={memory}' + \
                                     '''
-# SBATCH --account=research-eemcs-ese
+#SBATCH --account=research-eemcs-ese
 
 ''' + \
                                     f'#SBATCH --output=./slurm_logs/{run_name}.out' + \

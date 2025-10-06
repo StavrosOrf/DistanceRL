@@ -164,7 +164,7 @@ class DistanceAgent:
         self.expl_sigma = expl_sigma
         self.expl_sigma_start = expl_sigma
         self.expl_sigma_final = 0.05
-        self.expl_decay_steps = 120_000
+        self.expl_decay_steps = self.total_steps * 0.8
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
@@ -476,10 +476,13 @@ class DistanceAgent:
                 # Update sigma and use Ornstein-Uhlenbeck noise
                 self.ou_noise.set_sigma(self.expl_sigma)
                 noise = self.ou_noise.sample()
-            elif self.noise_type == "Sched":
+            elif self.noise_type == "SchedOU":
                 # use scheduled Gaussian noise
+                # Update sigma and use Ornstein-Uhlenbeck noise                
                 self.expl_sigma = self._exploration_sigma()   # decays 0.3 → 0.05
-                noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
+                # noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
+                self.ou_noise.set_sigma(self.expl_sigma)
+                noise = self.ou_noise.sample()
             else:
                 noise = np.random.normal(0, self.expl_sigma, size=self.act_dim)
 
