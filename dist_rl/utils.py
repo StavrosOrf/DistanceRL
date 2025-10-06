@@ -201,6 +201,7 @@ class RTGRolloutBuffer:
 
         self.ptr = -1               # last written index
         self.entry_count = 0        # number of written entries (<= max_size)
+        self.active_entries = 0      # number of entries with valid RTG & n-step (<= entry_count)
 
         # track current episode indices to back-fill RTG & n-step at 'done'
         self._ep_idx = []           # python list of integer indices (cyclic indices inside buffer)
@@ -229,6 +230,7 @@ class RTGRolloutBuffer:
         if done:
             self._backfill_episode(self._ep_idx)
             self._ep_idx.clear()
+            self.active_entries = self.entry_count  # all entries now have valid targets
 
     @torch.no_grad()
     def _backfill_episode(self, ep_indices):
@@ -254,7 +256,7 @@ class RTGRolloutBuffer:
             self.nreturn[i] = float((r_cpu[t:t+horizon] * gammas[:horizon]).sum())
 
     def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, ...]:
-        effective = min(self.entry_count, self.max_size)
+        effective = min(self.max_size, self.active_entries)
         replace = effective < batch_size
         idxs = np.random.choice(effective, size=batch_size, replace=replace)
         idxs = torch.as_tensor(idxs, device=self.device, dtype=torch.long)

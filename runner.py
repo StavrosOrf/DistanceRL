@@ -30,7 +30,7 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
             for K in [128]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        
-                        for noise_type in ["OU"]: # "OU", "Sched", "Normal"
+                        for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.3]:  # 0.1, 0.2, 0.3
                                 for top_k in [32]:  # 2, 8, 32, 64
                                     for lr in [1e-3]:
@@ -41,7 +41,7 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'ContrastPolicy_FixedNewLoss_TwDel_Ref_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
+                                                name = f'FixedBuffer_FixedNewLoss_TwDel_Ref_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
