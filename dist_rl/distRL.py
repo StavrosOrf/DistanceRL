@@ -9,13 +9,13 @@ import copy
 import random
 import wandb
 import time
+from tqdm import tqdm
 
 from dist_rl.models import Actor, Distance
 from dist_rl.loss import recursive_nstep_cosine_loss
 from dist_rl.utils import (RTGRolloutBuffer,
                            OrnsteinUhlenbeckNoise,
                            set_seed)
-
 
 class DistanceAgent:
     def __init__(
@@ -35,6 +35,7 @@ class DistanceAgent:
         expl_sigma=0.3,
         hidden_size=64,
         top_k=32,
+        dynamic_topk=True,
         device="cpu",
         noise_type="OU",  # "OU" or "scheduled Gaussian"
         wandb_run=None,
@@ -92,6 +93,7 @@ class DistanceAgent:
             ("V Gamma", v_gamma),
             ("Noise Type", noise_type),
             ("Top K", top_k),
+            ("Dynamic TopK", dynamic_topk),
             ("Model Save Path", model_save_path),
         ]
 
@@ -166,6 +168,15 @@ class DistanceAgent:
         self.expl_sigma_start = expl_sigma
         self.expl_sigma_final = 0.05
         self.expl_decay_steps = self.total_steps * 0.8
+        
+        # Top-k scheduler: starts at 5, linearly increases to top_k over half training
+        self.top_k_start = 5
+        self.top_k = top_k
+        self.top_k_rampup_steps = self.total_steps * 0.5
+        self.top_k_current = self.top_k_start
+        self.dynamic_topk = dynamic_topk
+        
+        self.best_reward = -float('inf')
 
         self.v_gamma = v_gamma
         self.wandb_run = wandb_run
@@ -188,6 +199,20 @@ class DistanceAgent:
         frac = min(1.0, t / max(1, self.expl_decay_steps))
         # linear interpolation
         return self.expl_sigma_start + frac * (self.expl_sigma_final - self.expl_sigma_start)
+
+    def _get_current_top_k(self):
+        """
+        Linear ramp-up for top_k: starts at 5, increases to top_k over half training steps.
+        After rampup_steps, stays at top_k.
+        """
+        t = float(self.steps_collected)
+        if t >= self.top_k_rampup_steps:
+            return int(self.top_k)
+        
+        # Linear interpolation from top_k_start to top_k
+        frac = t / max(1, self.top_k_rampup_steps)
+        current_k = self.top_k_start + frac * (self.top_k - self.top_k_start)
+        return int(max(self.top_k_start, current_k))
 
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         obs_tensor = torch.tensor(
@@ -285,19 +310,40 @@ class DistanceAgent:
 
         # ---- cosine similarities & top-K selection by cosine ----
         S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
-        K_eff = min(self.top_k, S_full.size(1))
+        if self.dynamic_topk:
+            K_eff = min(self._get_current_top_k(), S_full.size(1))
+        else:
+            K_eff = min(self.top_k, S_full.size(1))
+        
+        # Get top-K with minimum similarity threshold
         top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
+        
+        # Apply minimum similarity threshold - filter out low similarities
+        min_similarity_threshold = 0.0  # Can be tuned (e.g., 0.1, 0.2)
+        valid_mask = top_vals > min_similarity_threshold  # [B, K_eff]
+        
+        # Ensure at least one neighbor per batch element
+        valid_counts = valid_mask.sum(dim=1, keepdim=True).clamp(min=1)  # [B, 1]
+        
+        # For elements below threshold, set them to -inf so they get zero weight in softmax
+        top_vals_filtered = torch.where(valid_mask, top_vals, torch.tensor(float('-inf'), device=top_vals.device))
 
         # gather per-row top-K candidates
         RTG_top = returns.index_select(
             0, top_idx.reshape(-1)).reshape(a_pred.size(0), K_eff)      # [B,K]
-        # [B,K]
-        S_top = top_vals
+        # [B,K] - use filtered values for policy training
+        S_top = top_vals_filtered
 
         # ---- target (future-aware) distribution from RTG ----
-        # per-row baseline for stability (advantage-like)
-        G_base = RTG_top.mean(dim=1, keepdim=True)
-        scores = (RTG_top - G_base)
+        # Only include valid neighbors (above threshold) in the distribution
+        # Mask out RTG values for invalid neighbors
+        RTG_top_masked = torch.where(valid_mask, RTG_top, torch.tensor(0.0, device=RTG_top.device))
+        
+        # per-row baseline for stability (advantage-like) - computed only over valid neighbors
+        valid_sum = (RTG_top_masked * valid_mask.float()).sum(dim=1, keepdim=True)
+        G_base = valid_sum / valid_counts.float()
+        
+        scores = (RTG_top - G_base) * valid_mask.float()  # Zero out invalid scores
         P_tgt = torch.softmax(scores, dim=1)           # [B,K]
 
         # ---- predicted distribution from similarities ----
@@ -333,6 +379,7 @@ class DistanceAgent:
                 "train_p/rtg_c_mean": returns.mean().item(),
                 "train_p/rtg_c_max": returns.max().item(),
                 "train_p/topk_mean": S_top.mean().item(),
+                "train_p/current_top_k": K_eff,
                 "time/policy_step_time": time.time() - start_time
             }, step=self.steps_collected)
 
@@ -372,9 +419,20 @@ class DistanceAgent:
             z_c = nn.functional.normalize(z_c, p=2, dim=1)
 
         # ---- cosine similarities & top-K selection by cosine ----
-        S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]
-        K_eff = min(self.top_k, S_full.size(1))
-        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)
+        S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]        
+        # if self.dynamic_topk:
+        #     K_eff = min(self._get_current_top_k(), S_full.size(1))
+        # else:
+        #     K_eff = min(self.top_k, S_full.size(1))
+        
+        cos_sim_threshold = 0.95  
+        #find how many values are greater than cos_sim_threshold
+        num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)
+        # print(S_full)
+        # print(f'num_above_threshold: {num_above_threshold}\n')
+        K_eff = torch.clamp(num_above_threshold, min=5, max=self.top_k).cpu().numpy()
+        
+        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)        
 
         # Differentiable selection using softmax weights over top-K indices
         # Create a soft selection matrix based on similarities
@@ -417,6 +475,10 @@ class DistanceAgent:
                 "train_p/rtg_c_mean": returns.mean().item(),
                 "train_p/rtg_c_max": returns.max().item(),
                 "train_p/topk_mean": S_top.mean().item(),
+                "train_p/topk_std": S_top.std().item(),
+                "train_p/topk_min": S_top.min().item(),
+                "train_p/topk_max": S_top.max().item(),
+                "train_p/current_top_k": K_eff,
                 "time/policy_step_time": time.time() - start_time
             }, step=self.steps_collected)
 
@@ -470,8 +532,7 @@ class DistanceAgent:
     def train(self):
         self.steps_since_eval = 0
         env_step = 0
-        ep_reward = 0
-        self.best_reward = -float('inf')
+        ep_reward = 0        
 
         obs, _ = self.env.reset(seed=self.seed)
 
@@ -545,3 +606,35 @@ class DistanceAgent:
         self.evaluate_policy()
         self.save(self.model_save_path + f"/final")
         wandb.finish()
+
+
+
+    def train_offline(self):
+        """
+        Train the agent offline using only the replay buffer.
+        """
+        print(f"\n{'='*70}")
+        print(f"Starting Offline Training")
+        print(f"{'='*70}\n")            
+            
+        
+        for iteration in tqdm(range(self.total_steps), desc="Offline Training"):
+            self.steps_collected = iteration  # Use iteration count as "steps"
+            
+            # Train distance model
+            for _ in range(self.update_epochs_val):
+                self.train_distance()
+            
+            # Train policy
+            for _ in range(self.update_epochs_policy):
+                self.train_policy_reward_only()
+            
+            # Evaluate periodically
+            if (iteration + 1) % self.eval_freq == 0:                
+                self.evaluate_policy()
+                                
+        self.evaluate_policy()
+        self.save(self.model_save_path + "/final")
+
+        if self.wandb_run is not None:
+            wandb.finish()

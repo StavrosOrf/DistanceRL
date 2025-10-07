@@ -7,3 +7,4 @@ swig
 gymnasium[box2d]
 gymnasium[mujoco]
 minari
+minari[hf]

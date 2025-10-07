@@ -7,10 +7,11 @@
 2. [The DistRL algorithm](#the-distrl-algorithm)
 3. [Installation](#installation)
 4. [Quick start](#quick-start)
-5. [Configuration reference](#configuration-reference)
-6. [Repository structure](#repository-structure)
-7. [Logging & experiment tracking](#logging--experiment-tracking)
-8. [Citation](#citation)
+5. [Offline RL with Minari datasets](#offline-rl-with-minari-datasets)
+6. [Configuration reference](#configuration-reference)
+7. [Repository structure](#repository-structure)
+8. [Logging & experiment tracking](#logging--experiment-tracking)
+9. [Citation](#citation)
 
 ---
 
@@ -122,6 +123,80 @@ python main.py --env-id Hopper-v4 --algo DistRL --render True --eval-episodes 10
 
 ---
 
+## Offline RL with Minari datasets
+
+DistRL can be trained on **offline datasets** without any environment interaction using the Minari dataset library.
+
+### Quick Start with Offline RL
+
+1. **Install Minari** (if not already installed):
+   ```bash
+   pip install minari
+   ```
+
+2. **List available datasets**:
+   ```bash
+   python list_minari_datasets.py
+   ```
+
+3. **Train on HalfCheetah-Medium dataset**:
+   ```bash
+   python offline_main.py \
+     --dataset halfcheetah-medium-v0 \
+     --device cuda \
+     --total-iterations 100000 \
+     --batch-size 256 \
+     --K 20 \
+     --rtg-enabled \
+     --log-to-wandb
+   ```
+
+4. **Quick test** (minimal training):
+   ```bash
+   bash quickstart_offline.sh
+   ```
+
+### How Offline Training Works
+
+The offline training pipeline:
+
+1. **Loads a Minari dataset** (e.g., expert demonstrations or medium-quality trajectories)
+2. **Converts to RTGRolloutBuffer** which automatically calculates:
+   - Full Monte Carlo **Return-To-Go (RTG)** for each state
+   - **n-step returns** for lower-variance estimates
+3. **Trains purely from the buffer** without environment interaction
+4. **Evaluates periodically** on the actual environment to measure generalization
+
+### Key Differences from Online Training
+
+- **No exploration**: Agent learns only from fixed offline data
+- **Immediate training**: No warm-up period collecting random data
+- **Iteration-based**: Training runs for a fixed number of iterations rather than environment steps
+- **Pre-computed returns**: RTG and n-step returns are calculated when loading the dataset
+
+### Available Datasets
+
+Common Minari datasets for continuous control:
+
+- **HalfCheetah**: `halfcheetah-medium-v0`, `halfcheetah-expert-v0`
+- **Hopper**: `hopper-medium-v0`, `hopper-expert-v0`
+- **Walker2d**: `walker2d-medium-v0`, `walker2d-expert-v0`
+- **Ant**: `ant-medium-v0`, `ant-expert-v0`
+
+See [OFFLINE_README.md](OFFLINE_README.md) for comprehensive documentation on offline training.
+
+### Batch Offline Experiments
+
+Run multiple offline experiments with different hyperparameters:
+
+```bash
+bash batch_offline_runner.sh
+```
+
+Edit the script to customize datasets, seeds, and hyperparameters.
+
+---
+
 ## Configuration reference
 Key CLI arguments (see `main.py` for the full list):
 
@@ -146,11 +221,16 @@ Hyperparameters for classic baselines live in `classic_rl/hyperparams/<algo>.yam
 │   ├── distRL.py         # Core DistRL agent and training loop
 │   ├── models.py         # Actor & distance encoder architectures
 │   ├── loss.py           # Recursive n-step cosine loss implementation
-│   ├── utils.py          # Replay buffer, noise processes, helpers
+│   ├── utils.py          # Replay buffer (incl. RTGRolloutBuffer), noise, helpers
 │   └── hyperparams/     # YAML defaults for DistRL variants
 ├── batch_runner.py       # Utility for batched experiment launches
 ├── runner.py             # Legacy experiment entry point
-├── main.py               # Primary CLI to launch training
+├── main.py               # Primary CLI for online RL training
+├── offline_main.py       # CLI for offline RL training with Minari
+├── list_minari_datasets.py  # Utility to list available Minari datasets
+├── batch_offline_runner.sh  # Batch script for offline experiments
+├── quickstart_offline.sh    # Quick start script for offline RL
+├── OFFLINE_README.md     # Comprehensive offline RL documentation
 └── requirements.txt      # Python dependencies
 ```
 
