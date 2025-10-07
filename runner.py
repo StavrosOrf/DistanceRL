@@ -13,7 +13,7 @@ import time
 
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
-v_gamma = 2.0
+batch_size = 256
 
 MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
@@ -26,7 +26,7 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
 for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
-        for batch_size in [256]:
+        for v_gamma in [2]:  # 0.99, 0.95, 1.0
             for K in [128]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        

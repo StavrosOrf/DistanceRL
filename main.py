@@ -97,9 +97,9 @@ def main():
             exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%m%d_%H%M%S")
             group_name = args.group_name + args.env_id + "_testv1"
 
-        model_save_path = Path(args.model_save_path) / exp_prefix
-        model_save_path.mkdir(parents=True, exist_ok=True)
-        args.model_save_path = str(model_save_path)
+    model_save_path = Path(args.model_save_path) / exp_prefix
+    model_save_path.mkdir(parents=True, exist_ok=True)
+    args.model_save_path = str(model_save_path)
 
     if args.log_to_wandb:
         wandb_run = wandb.init(
@@ -145,13 +145,7 @@ def main():
                 buffer=agent.buffer,
                 device=args.device,
                 max_episodes=args.max_dataset_episodes,
-            )
-
-            # Log dataset stats to wandb
-            if args.wandb_run is not None:
-                wandb.log(**{f''"dataset/{k}": v for k,
-                          v in dataset_stats.items()})
-                            
+            )                                        
 
     elif args.algo == "StochDistRL":
         agent = StochasticDistanceAgent(**args.__dict__)

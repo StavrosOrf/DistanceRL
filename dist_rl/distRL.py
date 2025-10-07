@@ -478,7 +478,7 @@ class DistanceAgent:
         S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]        
         
         # Compute per-sample k based on cosine similarity threshold
-        cos_sim_threshold = 0.9
+        cos_sim_threshold = 0.85
         num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
         k_per_sample = torch.clamp(num_above_threshold, min=5, max=self.top_k)  # [B]
         
