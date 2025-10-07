@@ -14,6 +14,7 @@ import time
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 v_gamma = 2.0
+batch_size = 256
 
 MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
@@ -25,14 +26,26 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
 for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
-    for env in ['HalfCheetah-v5']:
-        for batch_size in [256]:
+    for dataset in ['mujoco/halfcheetah/expert-v0','mujoco/halfcheetah/medium-v0','mujoco/halfcheetah/simple-v0']:
+        env_mapping = {
+            'halfcheetah': 'HalfCheetah-v5',
+            'hopper': 'Hopper-v5',
+            'walker2d': 'Walker2d-v5',
+            'ant': 'Ant-v5',
+            'humanoid': 'Humanoid-v5',
+        }
+        dataset_env_name = dataset.split('/')[1] 
+        dataset_name = dataset.split('/')[-1].split('-')[0]  # Get last part after / and before -
+        env = env_mapping[dataset_env_name.lower()]
+
+
+        for max_dataset_episodes in [500]: #out of 1000
             for K in [128]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
-                                for top_k in [32]:  # 2, 8, 32, 64
+                                for top_k in [64]:  # 2, 8, 32, 64
                                     for lr in [1e-3]:
                                         for hidden_size in [256]:
                                             for seed in [42]:
@@ -41,10 +54,12 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'thresh0.975_min0_DynTopK_Ref_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
+                                                name = f'{algo}-{dataset_name}_d={max_dataset_episodes}_s={expl_sigma}-noise-type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
+                                                    f' --dataset {dataset}' + \
+                                                    f' --max-dataset-episodes {max_dataset_episodes}' + \
                                                     f' --algo {algo}' + \
                                                     f' --device {device}' + \
                                                     f' --batch-size {batch_size}' + \

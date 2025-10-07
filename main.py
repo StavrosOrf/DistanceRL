@@ -20,9 +20,9 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--env-id", type=str,
-                        default="HalfCheetah-v5", help="Gym environment ID")    
-    parser.add_argument("--dataset", type=str, default="mujoco/halfcheetah/medium-v0",
-                        help="Minari dataset name (e.g., mujoco/halfcheetah/medium-v0)")
+                        default="HalfCheetah-v5", help="Gym environment ID")
+    parser.add_argument("--dataset", type=str, default="mujoco/halfcheetah/expert-v0",
+                        help="Minari dataset name (e.g., mujoco/halfcheetah/expert-v0)")
     parser.add_argument("--max-dataset-episodes", type=int, default=None,
                         help="Maximum number of episodes to load from dataset")
     parser.add_argument("--optimal-run", action="store_true", default=False,
@@ -49,7 +49,7 @@ def main():
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument("--batch-size", type=int, default=5)
-    parser.add_argument("--comp-samples", type=int, default=4096)
+    parser.add_argument("--comp-samples", type=int, default=10)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
     parser.add_argument("--buffer-size", type=int, default=300_000)
@@ -63,7 +63,7 @@ def main():
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
     parser.add_argument("--q-percentile", type=float, default=0.7)
-    parser.add_argument("--top-k", type=int, default=3)    
+    parser.add_argument("--top-k", type=int, default=10)
     parser.add_argument("--dynamic-topk", action="store_true", default=True,
                         help="If true, top-k increases linearly from 5 to top_k over half training.")
     parser.add_argument("--v_gamma", type=float, default=1)
@@ -80,18 +80,19 @@ def main():
         args.device = "cpu"
 
     if args.max_dataset_episodes is not None:
-        print(f'Offline training using up to {args.max_dataset_episodes} episodes from dataset {args.dataset}')
+        print(
+            f'Offline training using up to {args.max_dataset_episodes} episodes from dataset {args.dataset}')
         # offline training only
         group_name = args.group_name + args.env_id + "_offline"
         exp_prefix = args.exp_prefix + "_" + args.env_id + \
-             + "_offline_" + datetime.now().strftime("%m%d_%H%M%S")                
+            "_offline_" + datetime.now().strftime("%m%d_%H%M%S")
     else:
         if args.algo in SB3_ALGOS:
             group_name = args.group_name + args.env_id + "_SB3"
             # args.device = "cpu"  # SB3 algorithms run on CPU by default
             args.log_to_wandb = True  # always log sb3 runs to wandb
             exp_prefix = args.algo + "_SB3_seed=" + \
-                str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")    
+                str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")
         else:
             exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%m%d_%H%M%S")
             group_name = args.group_name + args.env_id + "_testv1"
@@ -136,29 +137,35 @@ def main():
 
     if args.algo == "DistRL":
         agent = DistanceAgent(**args.__dict__)
-        
+
         if args.max_dataset_episodes is not None:
-                # Load Minari dataset into buffer
+            # Load Minari dataset into buffer
             dataset_stats = load_minari_dataset_into_buffer(
                 dataset_name=args.dataset,
                 buffer=agent.buffer,
                 device=args.device,
                 max_episodes=args.max_dataset_episodes,
             )
-            
+
             # Log dataset stats to wandb
             if args.wandb_run is not None:
-                wandb.log(**{f''"dataset/{k}": v for k, v in dataset_stats.items()})
-            
+                wandb.log(**{f''"dataset/{k}": v for k,
+                          v in dataset_stats.items()})
+                            
 
     elif args.algo == "StochDistRL":
         agent = StochasticDistanceAgent(**args.__dict__)
     else:
         agent = train_sb3_agent(**args.__dict__)
 
-    if args.algo not in SB3_ALGOS:
+    if args.algo not in SB3_ALGOS and args.max_dataset_episodes is None:
         agent.train()
-
+    elif args.algo in SB3_ALGOS:
+        pass  # training is done in train_sb3_agent()
+    else:
+        agent.train_offline()
+    
+    
 
 if __name__ == "__main__":
     main()

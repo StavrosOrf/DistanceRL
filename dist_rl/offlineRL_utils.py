@@ -1,6 +1,7 @@
 
 import numpy as np
 import minari
+from tqdm import tqdm 
 from dist_rl.utils import RTGRolloutBuffer
 
 
@@ -24,9 +25,8 @@ def load_minari_dataset_into_buffer(dataset_name: str, buffer: RTGRolloutBuffer,
     # Download and load dataset
     try:
         dataset = minari.load_dataset(dataset_name, download=True)
-        split_datasets = minari.split_dataset(dataset, sizes=[2], seed=42)
-        
-        dataset = split_datasets[0]  # Use the first split (10% of data)
+
+        # dataset = split_datasets[0]  # Use the first split (10% of data)
     except Exception as e:
         print(f"Error loading dataset: {e}")
         print(f"Available datasets: {minari.list_local_datasets()}")
@@ -44,7 +44,9 @@ def load_minari_dataset_into_buffer(dataset_name: str, buffer: RTGRolloutBuffer,
     episode_lengths = []
     
     # Load episodes into buffer
-    for ep_idx, episode in enumerate(dataset.iterate_episodes()):
+    #TODO: use progress bar from tqdm
+    
+    for ep_idx, episode in tqdm(enumerate(dataset.iterate_episodes()), total=episodes_to_load):
         if max_episodes and ep_idx >= max_episodes:
             break
             

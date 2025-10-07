@@ -213,6 +213,62 @@ class DistanceAgent:
         frac = t / max(1, self.top_k_rampup_steps)
         current_k = self.top_k_start + frac * (self.top_k - self.top_k_start)
         return int(max(self.top_k_start, current_k))
+    
+    def differentiable_topk(self, S_full, k_per_sample):
+        """
+        Fast vectorized differentiable top-k selection with per-sample k values.
+        
+        Args:
+            S_full: [B, M] tensor of similarities/scores
+            k_per_sample: [B] int tensor where each element specifies k for that sample
+        
+        Returns:
+            S_masked: [B, M] tensor with -inf for non-top-k elements, preserving gradients
+            top_vals: [B, K_max] tensor of top-k values (padded with -inf)
+            top_idx: [B, K_max] tensor of top-k indices (padded with last valid index)
+        """
+        B, M = S_full.shape
+        device = S_full.device
+        
+        # Get maximum k across all samples
+        K_max = int(k_per_sample.max().item())
+        K_max = min(K_max, M)  # Ensure K_max doesn't exceed available elements
+        
+        # Get top-K_max for all samples at once (vectorized)
+        top_vals_full, top_idx_full = torch.topk(S_full, k=K_max, dim=1, largest=True)  # [B, K_max]
+        
+        # Create a mask for valid top-k elements per sample
+        # For each row, we want to keep only the first k_per_sample[i] elements
+        k_mask = torch.arange(K_max, device=device).unsqueeze(0).expand(B, -1)  # [B, K_max]
+        valid_mask = k_mask < k_per_sample.unsqueeze(1)  # [B, K_max]
+        
+        # Apply mask to top_vals (set invalid entries to -inf)
+        top_vals = torch.where(valid_mask, top_vals_full, torch.tensor(float('-inf'), device=device))
+        top_idx = top_idx_full  # Keep all indices for reference
+        
+        # Create the masked similarity matrix S_masked
+        # For each sample, get the threshold (minimum value to include)
+        # We need to handle the case where k_per_sample[i] might be 0
+        k_clamped = k_per_sample.clamp(min=1, max=K_max)  # [B]
+        
+        # Gather the k-th largest value for each sample (the threshold)
+        # Use k_clamped - 1 as index since we're 0-indexed
+        batch_idx = torch.arange(B, device=device)
+        threshold_vals = top_vals_full[batch_idx, k_clamped - 1]  # [B]
+        
+        # Create differentiable mask: S_full >= threshold for each row
+        threshold_vals = threshold_vals.unsqueeze(1)  # [B, 1]
+        S_masked = torch.where(
+            S_full >= threshold_vals,
+            S_full,
+            torch.tensor(float('-inf'), device=device)
+        )  # [B, M]
+        
+        # Handle edge case: if k_per_sample[i] == 0, mask everything
+        zero_k_mask = (k_per_sample == 0).unsqueeze(1)  # [B, 1]
+        S_masked = torch.where(zero_k_mask, torch.tensor(float('-inf'), device=device), S_masked)
+        
+        return S_masked, top_vals, top_idx
 
     def get_action(self, obs: np.ndarray) -> np.ndarray:
         obs_tensor = torch.tensor(
@@ -420,25 +476,27 @@ class DistanceAgent:
 
         # ---- cosine similarities & top-K selection by cosine ----
         S_full = (z_i @ z_c.T)  # / max(1e-6, tau_sim)           # [B, M]        
-        # if self.dynamic_topk:
-        #     K_eff = min(self._get_current_top_k(), S_full.size(1))
-        # else:
-        #     K_eff = min(self.top_k, S_full.size(1))
         
-        cos_sim_threshold = 0.95  
-        #find how many values are greater than cos_sim_threshold
-        num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)
-        # print(S_full)
-        # print(f'num_above_threshold: {num_above_threshold}\n')
-        K_eff = torch.clamp(num_above_threshold, min=5, max=self.top_k).cpu().numpy()
+        # Compute per-sample k based on cosine similarity threshold
+        cos_sim_threshold = 0.9
+        num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
+        k_per_sample = torch.clamp(num_above_threshold, min=5, max=self.top_k)  # [B]
         
-        top_vals, top_idx = torch.topk(S_full, k=K_eff, dim=1, largest=True)        
-
-        # Differentiable selection using softmax weights over top-K indices
-        # Create a soft selection matrix based on similarities
-        # [B, M] - zero out non-top-K elements, then softmax over top-K
-        S_masked = torch.full_like(S_full, float('-inf'))
-        S_masked.scatter_(1, top_idx, top_vals)  # Only keep top-K values
+        # Use custom differentiable top-k with per-sample k
+        S_masked, top_vals, top_idx = self.differentiable_topk(S_full, k_per_sample)
+        
+        # Filter out -inf values for logging
+        # valid_top_vals = top_vals[top_vals != float('-inf')]
+        
+        # Debug prints (can be removed later)
+        # print(f'k_per_sample: {k_per_sample}')
+        # print(f'top_vals (valid): {valid_top_vals}')
+        # print(f'top_vals.mean(): {valid_top_vals.mean().item() if valid_top_vals.numel() > 0 else 0.0}')        
+        # print(f'S_masked: {S_masked}')
+        # print(f'S_full: {S_full}')
+        # print(f'top_idx: {top_idx}')
+        # print(f'top_vals: {top_vals}\n\n')
+        
         
         # Softmax to create differentiable weights [B, M]
         selection_weights = torch.softmax(S_masked, dim=1)  # [B, M]
@@ -470,15 +528,21 @@ class DistanceAgent:
 
         # ---- logs ----
         if self.wandb_run is not None:
+            # Filter out -inf values from S_top for statistics
+            valid_S_top = S_top[S_top != float('-inf')]
+            
             self.wandb_run.log({
                 "train_p/policy_loss": policy_loss.item(),
                 "train_p/rtg_c_mean": returns.mean().item(),
                 "train_p/rtg_c_max": returns.max().item(),
-                "train_p/topk_mean": S_top.mean().item(),
-                "train_p/topk_std": S_top.std().item(),
-                "train_p/topk_min": S_top.min().item(),
-                "train_p/topk_max": S_top.max().item(),
-                "train_p/current_top_k": K_eff,
+                # get the mean and std of non-inf values in S_top
+                "train_p/topk_mean": valid_S_top.mean().item() if valid_S_top.numel() > 0 else 0.0,
+                "train_p/topk_std": valid_S_top.std().item() if valid_S_top.numel() > 0 else 0.0,
+                "train_p/topk_min": valid_S_top.min().item() if valid_S_top.numel() > 0 else 0.0,
+                "train_p/topk_max": valid_S_top.max().item() if valid_S_top.numel() > 0 else 0.0,
+                "train_p/k_per_sample_mean": k_per_sample.float().mean().item(),
+                "train_p/k_per_sample_min": k_per_sample.min().item(),
+                "train_p/k_per_sample_max": k_per_sample.max().item(),
                 "time/policy_step_time": time.time() - start_time
             }, step=self.steps_collected)
 
