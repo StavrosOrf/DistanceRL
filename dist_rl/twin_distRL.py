@@ -385,16 +385,6 @@ class DistanceAgent:
         # Differentiable weighted selection of returns
         returns_top = (selection_weights @ returns.unsqueeze(1)).squeeze(1)  # [B, M] @ [M, 1] -> [B, 1] -> [B]
         
-        
-        # # Also consider lowest-K selection to push away bad actions
-        # lowest_vals, lowest_idx = torch.topk(S_full, k=K_eff, dim=1, largest=False)
-        # S_masked_low = torch.full_like(S_full, float('-inf'))
-        # S_masked_low.scatter_(1, lowest_idx, lowest_vals)  # Only keep lowest-K values
-
-        # # Softmax to create differentiable weights [B, M]
-        # selection_weights_low = torch.softmax(S_masked_low, dim=1)  # [B, M]
-        # returns_low = (selection_weights_low @ returns.unsqueeze(1)).squeeze(1)  # [B, M] @ [M, 1] -> [B, 1] -> [B]
-        
         # Keep S_top for logging
         S_top = top_vals
         

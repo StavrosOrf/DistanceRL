@@ -6,8 +6,8 @@ import wandb
 import yaml
 import torch
 
-from dist_rl.twin_distRL import DistanceAgent
-# from dist_rl.distRL import DistanceAgent
+# from dist_rl.twin_distRL import DistanceAgent
+from dist_rl.distRL import DistanceAgent
 from dist_rl.stoch_distRL import StochasticDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
@@ -52,7 +52,7 @@ def main():
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--hidden-size", type=int, default=16)
     parser.add_argument("--eval-episodes", type=int, default=2)
-    parser.add_argument("--eval-freq", type=int, default=1000)
+    parser.add_argument("--eval-freq", type=int, default=5000)
     parser.add_argument("--policy-training-start", type=int, default=1000)
     parser.add_argument("--val-training-start", type=int, default=1000)
     parser.add_argument("--q-percentile", type=float, default=0.7)

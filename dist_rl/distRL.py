@@ -212,6 +212,12 @@ class DistanceAgent:
 
             with torch.no_grad():
                 next_actions = self.actor_target(next_obs)
+                
+                # add noise to next actions for smoothing
+                # noise = (torch.randn_like(next_actions) * 0.2).clamp(-0.5, 0.5)
+                # next_actions = (next_actions + noise).clamp(
+                #     self.env.action_space.low[0], self.env.action_space.high[0])
+                
                 d_embeddings_next = self.distance_target(
                     next_obs, next_actions)
                 

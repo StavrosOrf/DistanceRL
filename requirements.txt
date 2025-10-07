@@ -6,3 +6,4 @@ sb3-contrib
 swig
 gymnasium[box2d]
 gymnasium[mujoco]
+minari
