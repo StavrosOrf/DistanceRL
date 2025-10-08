@@ -23,7 +23,7 @@ class DistanceTrunk(nn.Module):
     """Shared trunk z(s,a) used by critics and the representation loss."""
     def __init__(self, obs_dim, act_dim, hidden=256):
         super().__init__()
-        self.trunk = MLP(obs_dim + act_dim, hidden, hidden=hidden, layers=3, ln=True)
+        self.trunk = MLP(obs_dim + act_dim, hidden, hidden=hidden, layers=3, ln=False)
     def forward(self, obs, act):
         x = torch.cat([obs, act], dim=-1)
         z = self.trunk(x)
@@ -33,7 +33,7 @@ class GaussianActor(nn.Module):
     """Tanh-squashed Gaussian policy with state encoder."""
     def __init__(self, obs_dim, act_dim, hidden=256, log_std_bounds=(-5, 2)):
         super().__init__()
-        self.net = MLP(obs_dim, hidden, hidden=hidden, layers=2, ln=True)
+        self.net = MLP(obs_dim, hidden, hidden=hidden, layers=2, ln=False)
         self.mu = nn.Linear(hidden, act_dim)
         self.log_std = nn.Linear(hidden, act_dim)
         self.log_std_bounds = log_std_bounds
@@ -63,7 +63,7 @@ class TwinQ(nn.Module):
     """Twin Q heads that read the shared distance trunk features."""
     def __init__(self, feat_dim, hidden=256):
         super().__init__()
-        self.q1 = MLP(feat_dim, 1, hidden=hidden, layers=2, ln=True)
-        self.q2 = MLP(feat_dim, 1, hidden=hidden, layers=2, ln=True)
+        self.q1 = MLP(feat_dim, 1, hidden=hidden, layers=2, ln=False)
+        self.q2 = MLP(feat_dim, 1, hidden=hidden, layers=2, ln=False)
     def forward(self, feat):
         return self.q1(feat), self.q2(feat)

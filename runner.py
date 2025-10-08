@@ -24,10 +24,10 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['KernelsacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
+for algo in ['sacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
-            for K in [64]:
+            for K in [64, 128]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
@@ -41,7 +41,7 @@ for algo in ['KernelsacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
+                                                name = f'No_layerNorm_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
