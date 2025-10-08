@@ -14,6 +14,20 @@ import time
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 batch_size = 256
+total_steps = 1_000_000
+eval_freq = 5000
+updates_per_step = 1
+rep_loss_weight = 0.1
+rep_gamma_shape = 1.0
+target_entropy_scale = 0.7
+
+alpha_cql = 0.0
+
+kernel_aux_weight = 0.0
+kernel_temp = 0.5
+kernel_cand = 2048
+kernel_state_k = 64
+kernel_adaptive_tau = 1  # 1=True, 0=False
 
 MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
@@ -24,24 +38,20 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['sacDistRL', 'KernelsacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
+for algo in ['sacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
-            for K in [64]:
-                for comp_samples in [4096]:
-                    for rtg_enabled in [False]:                        
+            for K in [256]:
+                for comp_samples in [4096]:                                          
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
-                                for top_k in [32]:  # 2, 8, 32, 64
                                     for lr in [1e-3]:
                                         for hidden_size in [256]:
-                                            for seed in [42]:
-                                                
-                                                extra = " --rtg-enabled" if rtg_enabled else ""
+                                            for seed in [42]:                                                                                           
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'No_layerNorm_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
+                                                name = f'Kernel0.1_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
@@ -50,20 +60,30 @@ for algo in ['sacDistRL', 'KernelsacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                                                     f' --batch-size {batch_size}' + \
                                                     f' --K {K}' + \
                                                     f' --v_gamma {v_gamma}' + \
-                                                    f' --top-k {top_k}' + \
                                                     f' --lr {lr}' + \
                                                     f' --hidden-size {hidden_size}' + \
+                                                    f' --total-steps {total_steps}' + \
                                                     f' --buffer-size 500_000' + \
                                                     f' --seed {seed}' + \
                                                     f' --exp-prefix {name}' + \
                                                     f' --eval-episodes {eval_episodes}' + \
+                                                    f' --eval-freq {eval_freq}' + \
                                                     f' --policy-training-start 10_000' + \
                                                     f' --val-training-start 10_000' + \
                                                     f' --comp-samples {comp_samples}' + \
+                                                    f' --rep-gamma-shape {rep_gamma_shape}' + \
+                                                    f' --rep-loss-weight {rep_loss_weight}' + \
+                                                    f' --updates-per-step {updates_per_step}' + \
+                                                    f' --target-entropy-scale {target_entropy_scale}' + \
+                                                    f' --alpha-cql {alpha_cql}' + \
+                                                    f' --kernel-aux-weight {kernel_aux_weight}' + \
+                                                    f' --kernel-temp {kernel_temp}' + \
+                                                    f' --kernel-cand {kernel_cand}' + \
+                                                    f' --kernel-state-k {kernel_state_k}' + \
+                                                    f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
                                                     f' --noise-type {noise_type}' + \
                                                     ' --log_to_wandb' + \
                                                     f' --expl-sigma {expl_sigma}' + \
-                                                    extra + \
                                                     '" Enter'
 
                                                 os.system(command=command)

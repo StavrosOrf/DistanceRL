@@ -56,7 +56,7 @@ def main():
     parser.add_argument("--comp-samples", type=int, default=10)
     parser.add_argument("--update-epochs-policy", type=int, default=1)
     parser.add_argument("--update-epochs-val", type=int, default=1)
-    parser.add_argument("--buffer-size", type=int, default=300_000)
+    parser.add_argument("--buffer-size", type=int, default=1_000_000)
     parser.add_argument("--rtg-enabled", action="store_true", default=False,
                         help="If true, use RTG as returns, else use n-step returns.")
     parser.add_argument("--expl-sigma", type=float, default=0.3)
@@ -89,6 +89,16 @@ def main():
     parser.add_argument('--kernel-state-k', type=int, default=64)
     parser.add_argument('--kernel-adv', action='store_true',
                         help='Use advantage (recommended).')
+    parser.add_argument('--updates-per-step', type=int, default=1,
+                        help='Number of optimization rounds per environment step.')
+    parser.add_argument('--target-entropy-scale', type=float, default=0.7,
+                        help='Multiplier applied to -action_dim when computing the entropy target.')
+    parser.add_argument('--alpha-cql', type=float, default=0.0,
+                        help='Weight for the Conservative Q-Learning regularizer (0 disables).')
+    parser.add_argument('--kernel-aux-weight', type=float, default=0.0,
+                        help='Weight for the optional kernel auxiliary loss added to the actor.')
+    parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
+                        help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
 
     args = parser.parse_args()
