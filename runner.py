@@ -26,8 +26,8 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
 for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
-        for v_gamma in [2]:  # 0.99, 0.95, 1.0
-            for K in [128]:
+        for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
+            for K in [256, 512]:
                 for comp_samples in [4096]:
                     for rtg_enabled in [False]:                        
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
@@ -39,9 +39,9 @@ for algo in ['DistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                                                 
                                                 extra = " --rtg-enabled" if rtg_enabled else ""
 
-                                                name = f"-lr={lr}-K={K}-seed={seed}"
+                                                name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'thresh0.975_min0_DynTopK_Ref_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
+                                                name = f'BetaEM_ADynTopK_Ref_{algo}_s={expl_sigma}-noise_type={noise_type}_cmp={comp_samples}_topk={top_k}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

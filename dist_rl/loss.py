@@ -27,6 +27,8 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from dist_rl.utils import BetaEMA
+
 
 def _pairwise_gaps(u: torch.Tensor) -> torch.Tensor:
     """
@@ -190,6 +192,7 @@ def recursive_nstep_cosine_loss(
     # (B,)  # <-- use n-step returns, not RTG
     nreturns: torch.Tensor,
     discount: float = 0.99,
+    beta_ema: BetaEMA = None,
     # the n used in nreturns (for logging only)
     n: int = 20,
     gamma_shape: float = 1.0,          # your v_gamma: sharpness in t(Δ)=1-2Δ^γ
@@ -210,8 +213,16 @@ def recursive_nstep_cosine_loss(
     G = (u - u.T).abs()                    # (B,B)
 
     # Robust scale β: 95th percentile per batch (avoids hand-tuning)
+    # with torch.no_grad():
+    #     beta = torch.quantile(G.reshape(-1), 0.95) + 1e-6
+        
     with torch.no_grad():
-        beta = torch.quantile(G.reshape(-1), 0.95) + 1e-6
+        beta_batch = torch.quantile(G.reshape(-1), 0.95) + 1e-6
+        if beta_ema is not None:
+            beta = embeddings.new_tensor(beta_ema.update(beta_batch))
+        else:
+            beta = beta_batch
+            
     Delta = (G / beta).clamp(0., 1.)
 
     # Target cosine from gap
