@@ -499,23 +499,8 @@ class DistanceAgent:
         S_masked, top_vals, top_idx = self.differentiable_topk(
             S_full, k_per_sample)
 
-        # Filter out -inf values for logging
-        # valid_top_vals = top_vals[top_vals != float('-inf')]
-
-        # Debug prints (can be removed later)
-        # print(f'k_per_sample: {k_per_sample}')
-        # print(f'top_vals (valid): {valid_top_vals}')
-        # print(f'top_vals.mean(): {valid_top_vals.mean().item() if valid_top_vals.numel() > 0 else 0.0}')
-        # print(f'S_masked: {S_masked}')
-        # print(f'S_full: {S_full}')
-        # print(f'top_idx: {top_idx}')
-        # print(f'top_vals: {top_vals}\n\n')
-
         # Softmax to create differentiable weights [B, M]
         selection_weights = torch.softmax(S_masked, dim=1)  # [B, M]
-
-        # print(f'selection_weights: {selection_weights}')
-        # print(f'returns: {returns}')
 
         # Differentiable weighted selection of returns
         RTG_top = (selection_weights @ returns.unsqueeze(1)
@@ -523,9 +508,6 @@ class DistanceAgent:
 
         # Keep S_top for logging
         S_top = top_vals
-
-        # print(f'RTG_top: {RTG_top}')
-        # print(f'S_top: {S_top}')
 
         # Policy loss: maximize weighted return
         policy_loss = -RTG_top.mean()

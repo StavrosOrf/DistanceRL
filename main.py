@@ -13,6 +13,10 @@ from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
 from dist_rl.offlineRL_utils import load_minari_dataset_into_buffer
 
+from dist_rl_fix.algos.sac_distance import SACDistanceAgent
+from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
+from dist_rl_fix.utils import set_seed
+
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 
 
@@ -41,7 +45,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistRL")
+    parser.add_argument("--algo", type=str, default="KernelsacDistRL")
     # parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--model-save-path", type=str,
                         default="./saved_models/")
@@ -71,6 +75,21 @@ def main():
     parser.add_argument("--policy-noise", type=float, default=0.2)
     parser.add_argument("--policy-noise-clip", type=float, default=0.5)
     parser.add_argument("--actor-update-frequency", type=int, default=1)
+
+    parser.add_argument('--alpha', type=float, default=None,
+                        help='If None, autotune alpha.')
+    parser.add_argument('--gamma', type=float, default=0.99)
+    parser.add_argument('--tau', type=float, default=0.005)
+    parser.add_argument('--rep-loss-weight', type=float, default=0.1)
+    parser.add_argument('--rep-gamma-shape', type=float, default=1.0)
+    parser.add_argument('--rep-lam', type=float, default=0.5)
+    parser.add_argument('--rep-huber', type=float, default=0.2)
+    parser.add_argument('--kernel-temp', type=float, default=0.5)
+    parser.add_argument('--kernel-cand', type=int, default=2048)
+    parser.add_argument('--kernel-state-k', type=int, default=64)
+    parser.add_argument('--kernel-adv', action='store_true',
+                        help='Use advantage (recommended).')
+    parser.add_argument('--logdir', type=str, default='./logs')
 
     args = parser.parse_args()
 
@@ -145,10 +164,29 @@ def main():
                 buffer=agent.buffer,
                 device=args.device,
                 max_episodes=args.max_dataset_episodes,
-            )                                        
+            )
 
     elif args.algo == "StochDistRL":
         agent = StochasticDistanceAgent(**args.__dict__)
+
+    elif "sacDistRL" in args.algo:
+        set_seed(args.seed)
+
+        setattr(args, 'n_step', args.K)  # for representation loss
+        setattr(args, 'hidden', args.hidden_size)  # for representation loss
+        setattr(args, 'alpha', args.alpha)  # for representation loss        
+        setattr(args, 'save_dir', args.model_save_path)
+
+        agent = SACDistanceAgent(**args.__dict__)
+        if args.algo == 'sacDistRL':
+            agent.train_sac()
+        else:
+            print(f'Running {args.algo} with kernel policy updates.')
+            # Kernel policy update loop
+            KernelPolicyMixin.attach(agent, temp=args.kernel_temp, cand=args.kernel_cand,
+                                     state_k=args.kernel_state_k, use_adv=args.kernel_adv)
+            agent.train_kernel()
+
     else:
         agent = train_sb3_agent(**args.__dict__)
 
@@ -158,8 +196,7 @@ def main():
         pass  # training is done in train_sb3_agent()
     else:
         agent.train_offline()
-    
-    
+
 
 if __name__ == "__main__":
     main()
