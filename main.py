@@ -11,7 +11,7 @@ from dist_rl.distRL import DistanceAgent
 from dist_rl.stoch_distRL import StochasticDistanceAgent
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import load_hyperparameters
-from dist_rl.offlineRL_utils import load_minari_dataset_into_buffer
+# from dist_rl.offlineRL_utils import load_minari_dataset_into_buffer
 
 from dist_rl_fix.algos.sac_distance import SACDistanceAgent
 from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
@@ -169,12 +169,13 @@ def main():
 
         if args.max_dataset_episodes is not None:
             # Load Minari dataset into buffer
-            dataset_stats = load_minari_dataset_into_buffer(
-                dataset_name=args.dataset,
-                buffer=agent.buffer,
-                device=args.device,
-                max_episodes=args.max_dataset_episodes,
-            )
+            # dataset_stats = load_minari_dataset_into_buffer(
+            #     dataset_name=args.dataset,
+            #     buffer=agent.buffer,
+            #     device=args.device,
+            #     max_episodes=args.max_dataset_episodes,
+            # )
+            raise NotImplementedError("Minari dataset loading not implemented.")
 
     elif args.algo == "StochDistRL":
         agent = StochasticDistanceAgent(**args.__dict__)

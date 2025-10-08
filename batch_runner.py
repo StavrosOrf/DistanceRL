@@ -11,13 +11,13 @@ import random
 
 # ---------------- General configuration ----------------
 
-partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
+partition = 'gpu-a100'  # gpu-a100 # gpu-a100-small # gpu, compute
 algo = 'sacDistRL'
 group_name = "SACDistRL_ablation_"
 
 # resource configuration
 device = 'cuda' if partition != 'compute' else 'cpu'
-job_hours = 4 if partition == 'gpu-a100-small' else 12
+job_hours = 4 if partition == 'gpu-a100-small' else 6
  
 cpu_cores = 1 if partition != 'compute' else 2
 memory_per_cpu = '5300' if partition != 'compute' else '3800'
@@ -25,7 +25,7 @@ batch_arg = '#SBATCH --gpus-per-task=1' if partition != 'compute' else '\n'
 
 # training defaults (kept constant across ablations)
 v_gamma = 1.0
-hidden_size_default = 256
+hidden_size_default = 512#!!!
 buffer_size_default = 1_000_000
 top_k_default = 32
 comp_samples_default = 4096
@@ -33,7 +33,7 @@ noise_type_default = "OU"
 eval_episodes_default = 10
 policy_training_start_default = 10_000
 val_training_start_default = 10_000
-total_steps_default = 1_000_000
+total_steps_default = 1_500_000
 eval_freq_default = 5000
 updates_per_step_default = 1
 
@@ -44,13 +44,13 @@ kernel_state_k_default = 64
 kernel_adaptive_tau_default = 1
 
 # ---------------- Ablation grids ----------------
-env_grid = ['HalfCheetah-v5']
-batch_size_grid = [256, 512]
-K_grid = [128, 512]
+env_grid = ['Humanoid-v5'] #
+batch_size_grid = [256]
+K_grid = [256, 512]
 expl_sigma_grid = [0.1]
-lr_grid = [1e-3, 2e-4]
+lr_grid = [3e-4]# [1e-3]
 seed_grid = [42]
-rep_gamma_shape_grid = [1.0, 0.5]
+rep_gamma_shape_grid = [1.0]
 rep_loss_weight_grid = [0.0, 0.1]
 target_entropy_scale_grid = [0.7, 0.9]
 kernel_aux_weight_grid = [0.0, 0.1]
