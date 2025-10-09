@@ -43,7 +43,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             for K in [256]:
-                for ot_eta in [10, 100, 1000]:                                          
+                for ot_eta in [1000]:                                          
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
                                     for lr in [1e-3]:
@@ -52,7 +52,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'1Update_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'NoEntropyNoQMaximizing_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
