@@ -15,6 +15,7 @@ from dist_rl.utils import load_hyperparameters
 
 from dist_rl_fix.algos.sac_distance import SACDistanceAgent
 from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
+from dist_rl_fix.algos.sac_wasserstein import SACWassersteinAgent
 from dist_rl_fix.utils import set_seed
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
@@ -45,7 +46,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="KernelsacDistRL")
+    parser.add_argument("--algo", type=str, default="sacWasserstein")
     # parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--model-save-path", type=str,
                         default="./saved_models/")
@@ -84,14 +85,18 @@ def main():
     parser.add_argument('--rep-gamma-shape', type=float, default=1.0)
     parser.add_argument('--rep-lam', type=float, default=0.5)
     parser.add_argument('--rep-huber', type=float, default=0.2)
+    parser.add_argument('--rep-margin-scale', type=float, default=0.5)
+    parser.add_argument('--rep-temp', type=float, default=1.0)
+
     parser.add_argument('--kernel-temp', type=float, default=0.5)
     parser.add_argument('--kernel-cand', type=int, default=2048)
     parser.add_argument('--kernel-state-k', type=int, default=64)
     parser.add_argument('--kernel-adv', action='store_true',
                         help='Use advantage (recommended).')
-    parser.add_argument('--updates-per-step', type=int, default=1,
+    
+    parser.add_argument('--updates-per-step', type=int, default=5,
                         help='Number of optimization rounds per environment step.')
-    parser.add_argument('--target-entropy-scale', type=float, default=0.7,
+    parser.add_argument('--target-entropy-scale', type=float, default=0.8,
                         help='Multiplier applied to -action_dim when computing the entropy target.')
     parser.add_argument('--alpha-cql', type=float, default=0.0,
                         help='Weight for the Conservative Q-Learning regularizer (0 disables).')
@@ -100,6 +105,15 @@ def main():
     parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
+    
+    # add the following parser args
+    parser.add_argument('--ot-eta', type=float, default=0.1)
+    parser.add_argument('--ot-eps', type=float, default=0.05)
+    parser.add_argument('--ot-iters', type=int, default=10)
+    parser.add_argument('--ot-K', type=int, default=16)
+    parser.add_argument('--ot-Kt', type=int, default=32)
+    parser.add_argument('--ot-std-scale', type=float, default=1.5)
+    parser.add_argument('--ot-topk-target', type=bool, default=True)
 
     args = parser.parse_args()
 
@@ -198,6 +212,18 @@ def main():
                                      state_k=args.kernel_state_k, use_adv=args.kernel_adv)
             agent.train_kernel()
 
+    elif "sacWasserstein" in args.algo:
+        set_seed(args.seed)
+
+        setattr(args, 'n_step', args.K)  # for representation loss
+        setattr(args, 'hidden', args.hidden_size)  # for representation loss
+        setattr(args, 'alpha', args.alpha)  # for representation loss        
+        setattr(args, 'save_dir', args.model_save_path)
+        
+        agent = SACWassersteinAgent(**args.__dict__)
+
+        print(f'Running {args.algo} with kernel policy updates.')
+    
     else:
         agent = train_sb3_agent(**args.__dict__)
 

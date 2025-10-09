@@ -13,7 +13,7 @@ import time
 
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
-batch_size = 256
+batch_size = 512
 total_steps = 1_000_000
 eval_freq = 5000
 updates_per_step = 1
@@ -38,7 +38,7 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['sacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
+for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             for K in [256]:
@@ -51,7 +51,7 @@ for algo in ['sacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'Kernel0.1_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'5Updates_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
@@ -63,7 +63,7 @@ for algo in ['sacDistRL']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                                                     f' --lr {lr}' + \
                                                     f' --hidden-size {hidden_size}' + \
                                                     f' --total-steps {total_steps}' + \
-                                                    f' --buffer-size 500_000' + \
+                                                    f' --buffer-size 1_000_000' + \
                                                     f' --seed {seed}' + \
                                                     f' --exp-prefix {name}' + \
                                                     f' --eval-episodes {eval_episodes}' + \

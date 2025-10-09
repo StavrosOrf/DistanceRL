@@ -143,4 +143,4 @@ class KernelPolicyMixin:
 
             if (self.steps % self.eval_freq) == 0:
                 self.evaluate()
-                # self._save("ckpt")
+                self._save("ckpt")

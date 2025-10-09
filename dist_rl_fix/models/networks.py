@@ -28,6 +28,19 @@ class DistanceTrunk(nn.Module):
     def forward(self, obs, act):
         x = torch.cat([obs, act], dim=-1)
         return self.trunk(x)
+    
+class DistanceTrunkWs(nn.Module):
+    """
+    State-conditional action embedding z(s,a) \in R^H.
+    Used for value-aware metric and OT transport; NOT used by critics.
+    """
+    def __init__(self, obs_dim, act_dim, hidden=256, out_dim=256, layers=3):
+        super().__init__()
+        self.net = MLP(obs_dim + act_dim, out_dim, hidden=hidden, layers=layers)
+
+    def forward(self, obs, act):
+        x = torch.cat([obs, act], dim=-1)
+        return self.net(x)
 
 class GaussianActor(nn.Module):
     """Tanh-Gaussian policy."""
