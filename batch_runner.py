@@ -25,7 +25,7 @@ batch_arg = '#SBATCH --gpus-per-task=1' if partition != 'compute' else '\n'
 
 # training defaults (kept constant across ablations)
 v_gamma = 1.0
-hidden_size_default = 512#!!!
+hidden_size_default = 256 #!!!
 buffer_size_default = 1_000_000
 top_k_default = 32
 comp_samples_default = 4096
@@ -44,11 +44,11 @@ kernel_state_k_default = 64
 kernel_adaptive_tau_default = 1
 
 # ---------------- Ablation grids ----------------
-env_grid = ['Humanoid-v5'] #
+env_grid = ['HalfCheetah-v5'] # "HalfCheetah-v5", "Hopper-v5", "Walker2d-v5", "Ant-v5", "Humanoid-v5"
 batch_size_grid = [256]
-K_grid = [256, 512]
+K_grid = [256]
 expl_sigma_grid = [0.1]
-lr_grid = [3e-4]# [1e-3]
+lr_grid = [1e-3]# [1e-3]
 seed_grid = [42]
 rep_gamma_shape_grid = [1.0]
 rep_loss_weight_grid = [0.0, 0.1]
@@ -58,7 +58,7 @@ kernel_aux_weight_grid = [0.0, 0.1]
 # if directory does not exist, create it
 if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
-# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3]:
+    
 for env in env_grid:
     for batch_size in batch_size_grid:
         for K in K_grid:
