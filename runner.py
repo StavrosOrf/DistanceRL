@@ -52,7 +52,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'NoEntropyNoQMaximizing_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'ScheduledOT_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

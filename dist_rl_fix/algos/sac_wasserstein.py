@@ -107,7 +107,9 @@ class SACWassersteinAgent:
         self.rep_huber = rep_huber
 
         # OT config
-        self.ot_eta = ot_eta
+        self.ot_eta_start = ot_eta
+        self.ot_eta_final = 0.00001
+        self.ot_eta_anneal = int(0.5 * total_steps)  # anneal over first half
         self.ot_eps = ot_eps
         self.ot_iters = ot_iters
         self.ot_K = ot_K
@@ -132,6 +134,12 @@ class SACWassersteinAgent:
     @alpha.setter
     def alpha(self, v):
         self._alpha = v
+
+    @property
+    def ot_eta(self):
+        """Linear anneal from ot_eta_start to ot_eta_final over ot_eta_anneal steps."""
+        frac = min(1.0, self.steps / max(1, self.ot_eta_anneal))
+        return (1 - frac) * self.ot_eta_start + frac * self.ot_eta_final
 
     # ---------- helpers ----------
     def _env_to_action(self, a):
