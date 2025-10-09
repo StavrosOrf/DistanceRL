@@ -94,7 +94,7 @@ def main():
     parser.add_argument('--kernel-adv', action='store_true',
                         help='Use advantage (recommended).')
     
-    parser.add_argument('--updates-per-step', type=int, default=5,
+    parser.add_argument('--updates-per-step', type=int, default=1,
                         help='Number of optimization rounds per environment step.')
     parser.add_argument('--target-entropy-scale', type=float, default=0.8,
                         help='Multiplier applied to -action_dim when computing the entropy target.')

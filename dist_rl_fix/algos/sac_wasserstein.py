@@ -378,7 +378,8 @@ class SACWassersteinAgent:
                 # --- In-state rep loss ---
                 if self.rep_loss_weight > 0.0:
                     rep_loss, rep_info = self._rep_loss(obs)
-                    self.optim_rep.zero_grad(); (self.rep_loss_weight * rep_loss).backward()
+                    self.optim_rep.zero_grad()
+                    (self.rep_loss_weight * rep_loss).backward()
                     torch.nn.utils.clip_grad_norm_(self.rep_trunk.parameters(), 10.0)
                     self.optim_rep.step()
                     if wandb.run is not None:
@@ -394,7 +395,8 @@ class SACWassersteinAgent:
                     if wandb.run is not None:
                         wandb.log(ot_logs, step=self.steps)
 
-                self.optim_actor.zero_grad(); actor_loss.backward()
+                self.optim_actor.zero_grad()
+                actor_loss.backward()
                 torch.nn.utils.clip_grad_norm_(self.actor.parameters(), 10.0)
                 self.optim_actor.step()
 

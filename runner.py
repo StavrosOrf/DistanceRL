@@ -20,6 +20,7 @@ updates_per_step = 1
 rep_loss_weight = 0.1
 rep_gamma_shape = 1.0
 target_entropy_scale = 0.7
+comp_samples = 4096
 
 alpha_cql = 0.0
 
@@ -42,7 +43,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             for K in [256]:
-                for comp_samples in [4096]:                                          
+                for ot_eta in [10, 100, 1000]:                                          
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
                                     for lr in [1e-3]:
@@ -51,7 +52,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'5Updates_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'1Update_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \
@@ -81,6 +82,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                                                     f' --kernel-cand {kernel_cand}' + \
                                                     f' --kernel-state-k {kernel_state_k}' + \
                                                     f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
+                                                    f' --ot-eta {ot_eta}' + \
                                                     f' --noise-type {noise_type}' + \
                                                     ' --log_to_wandb' + \
                                                     f' --expl-sigma {expl_sigma}' + \
