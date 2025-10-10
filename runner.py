@@ -18,8 +18,8 @@ total_steps = 1_000_000
 eval_freq = 5000
 updates_per_step = 1
 rep_loss_weight = 0.1
-rep_gamma_shape = 1.0
-target_entropy_scale = 0.7
+rep_gamma_shape = 0.5
+target_entropy_scale = 1
 comp_samples = 4096
 
 alpha_cql = 0.0
@@ -42,6 +42,7 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
+            rep_gamma_shape = v_gamma
             for K in [256]:
                 for kernel_aux_weight in [100]:  # 0.0, 0.1
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
@@ -52,7 +53,7 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
-                                                name = f'UpdatedActorLoss_{algo}_kw={kernel_aux_weight}' +  '-' + name
+                                                name = f'AlphaFix_NoisyRep_{algo}_kw={kernel_aux_weight}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

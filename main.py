@@ -84,7 +84,7 @@ def main():
     parser.add_argument('--tau', type=float, default=0.005)
     
     parser.add_argument('--rep-loss-weight', type=float, default=0.1)
-    parser.add_argument('--rep-gamma-shape', type=float, default=1.0)
+    parser.add_argument('--rep-gamma-shape', type=float, default=0.5)
     parser.add_argument('--rep-lam', type=float, default=0.5)
     parser.add_argument('--rep-huber', type=float, default=0.2)
     parser.add_argument('--rep-margin-scale', type=float, default=0.5)

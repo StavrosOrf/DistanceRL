@@ -99,19 +99,14 @@ class SACDistanceAgentNew:
             self.rep_trunk.parameters(), lr=self.lr)
 
         # === Temperature alpha ===
-        if alpha is None:
-            # scaled target entropy (better for MuJoCo)
-            self.target_entropy = - \
-                self.target_entropy_scale * float(self.act_dim)
-            self.log_alpha = torch.nn.Parameter(
-                torch.zeros(1, device=self.device))
-            self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.lr)
-            self._alpha_fixed = False
-        else:
-            self._alpha = float(alpha)
-            self._alpha_fixed = True
-            self.target_entropy = - \
-                self.target_entropy_scale * float(self.act_dim)
+
+        self.target_entropy = - \
+            self.target_entropy_scale * float(self.act_dim)
+        self.log_alpha = torch.nn.Parameter(
+            torch.zeros(1, device=self.device))
+        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=self.lr)
+        self._alpha_fixed = False
+
 
         # Replay & normalization
         self.replay = RolloutBuffer(
@@ -194,6 +189,7 @@ class SACDistanceAgentNew:
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
             alpha = self.alpha if self._alpha_fixed else self.log_alpha.exp()
+            # alpha = torch.clamp(alpha, min=0.02) 
             target = r.unsqueeze(-1) + self.gamma * \
                 (1 - d.unsqueeze(-1)) * (qt - alpha * logp2)
         return target
@@ -248,10 +244,10 @@ class SACDistanceAgentNew:
         # Compute per-sample k based on cosine similarity threshold
         cos_sim_threshold = 0.85
         num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
-        print(f'num_above_threshold: {num_above_threshold}')
+        # print(f'num_above_threshold: {num_above_threshold}')
         k_per_sample = torch.clamp(
             num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
-        print(f'k_per_sample: {k_per_sample}')
+        # print(f'k_per_sample: {k_per_sample}')
 
         S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
         
@@ -261,7 +257,7 @@ class SACDistanceAgentNew:
         # adaptive tau per row
         # if self.kernel_adaptive_tau:
         W = torch.softmax(S_masked, dim=1)
-        print(f'W sum (should be 1.0): {W}')
+        # print(f'W sum (should be 1.0): {W}')
             # assert torch.isfinite(W).all(), "Non-finite weights in kernel auxiliary!"
         # else:
         #     W = torch.softmax(S_masked / max(1e-6, self.kernel_temp), dim=1)
@@ -272,13 +268,14 @@ class SACDistanceAgentNew:
             qc1, qc2 = self.qnet(obs_c_n, act_c)
             qc = torch.min(qc1, qc2).unsqueeze(0)
         
-        print(f'qc: {qc}')
+        # print(f'qc: {qc}')
         # (B,1)
         Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)   
-        print(f'Qhat mean: {Qhat.mean().item()}')     
+        # print(f'Qhat mean: {Qhat.mean().item()}')     
 
         alpha = self.log_alpha.exp()
-        entropy_loss = (alpha * logp).mean()     
+        # alpha = torch.clamp(alpha, min=0.02)
+        entropy_loss = (alpha * logp).mean()
         actor_loss = entropy_loss - Qhat.mean()
         alpha_loss = -(self.log_alpha *
                         (logp + self.target_entropy).detach()).mean()
@@ -302,6 +299,9 @@ class SACDistanceAgentNew:
 
         with torch.no_grad():  # stop-grad target
             a2, _, _ = self.actor.sample(next_obs_n)
+            #add noise to a2
+            a2 += torch.randn_like(a2) * 0.2
+            a2 = a2.clamp(-1, 1)            
             z_next = self.rep_trunk_targ(next_obs_n, a2)
 
             q1t, q2t = self.q_targ(obs_n, act)
@@ -330,6 +330,9 @@ class SACDistanceAgentNew:
             self.kernel_cand)
         obs_c_n = self.obs_rms.normalize(obs_c)
         act_c = self._env_to_action(act_env_c)
+        # add noise to act_c
+        # act_c += torch.randn_like(act_c) * 0.2
+        # act_c = act_c.clamp(-1, 1)
 
         # kernel similarities in rep space
         z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
@@ -342,7 +345,7 @@ class SACDistanceAgentNew:
         S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
         
         # Compute per-sample k based on cosine similarity threshold
-        cos_sim_threshold = 0.85
+        cos_sim_threshold = 0.8
         num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
         k_per_sample = torch.clamp(
             num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
@@ -468,8 +471,14 @@ class SACDistanceAgentNew:
                 if alpha_loss is not None:
                     self.alpha_opt.zero_grad()
                     alpha_loss.backward()
+                    #monitor alpha value grad norm
+                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                        [self.log_alpha], 10.0)
                     self.alpha_opt.step()
                     logs["train/alpha"] = float(self.log_alpha.exp().item())
+                    logs["train/alpha_loss"] = float(alpha_loss.item())
+                    #monitor alpha grad norm
+                    logs["train/alpha_grad_norm"] = float(grad_norm)
                 else:
                     logs["train/alpha"] = float(self.alpha)
                 if wandb.run is not None:
