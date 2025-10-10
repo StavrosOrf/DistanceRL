@@ -91,7 +91,7 @@ def main():
     parser.add_argument('--rep-temp', type=float, default=1.0)
 
     parser.add_argument('--kernel-temp', type=float, default=0.5)
-    parser.add_argument('--kernel-cand', type=int, default=2048)
+    parser.add_argument('--kernel-cand', type=int, default=10)
     parser.add_argument('--kernel-state-k', type=int, default=64)
     parser.add_argument('--kernel-adv', action='store_true',
                         help='Use advantage (recommended).')

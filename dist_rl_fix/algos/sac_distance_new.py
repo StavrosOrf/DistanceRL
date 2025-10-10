@@ -248,8 +248,10 @@ class SACDistanceAgentNew:
         # Compute per-sample k based on cosine similarity threshold
         cos_sim_threshold = 0.85
         num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
+        print(f'num_above_threshold: {num_above_threshold}')
         k_per_sample = torch.clamp(
             num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
+        print(f'k_per_sample: {k_per_sample}')
 
         S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
         
@@ -259,17 +261,21 @@ class SACDistanceAgentNew:
         # adaptive tau per row
         # if self.kernel_adaptive_tau:
         W = torch.softmax(S_masked, dim=1)
+        print(f'W sum (should be 1.0): {W}')
             # assert torch.isfinite(W).all(), "Non-finite weights in kernel auxiliary!"
         # else:
         #     W = torch.softmax(S_masked / max(1e-6, self.kernel_temp), dim=1)
         #     raise NotImplementedError("Non-adaptive tau not implemented!")
 
         # targets: critics' Q rather than returns (much better bias)
-        qc1, qc2 = self.qnet(obs_c_n, act_c)
-        qc = torch.min(qc1, qc2).unsqueeze(0)
-
+        with torch.no_grad():
+            qc1, qc2 = self.qnet(obs_c_n, act_c)
+            qc = torch.min(qc1, qc2).unsqueeze(0)
+        
+        print(f'qc: {qc}')
         # (B,1)
-        Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)        
+        Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)   
+        print(f'Qhat mean: {Qhat.mean().item()}')     
 
         alpha = self.log_alpha.exp()
         entropy_loss = (alpha * logp).mean()     
