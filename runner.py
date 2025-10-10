@@ -13,7 +13,7 @@ import time
 
 device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
-batch_size = 512
+batch_size = 256
 total_steps = 1_000_000
 eval_freq = 5000
 updates_per_step = 5
@@ -24,11 +24,11 @@ comp_samples = 4096
 
 alpha_cql = 0.0
 
-kernel_aux_weight = 0.0
 kernel_temp = 0.5
 kernel_cand = 2048
 kernel_state_k = 64
 kernel_adaptive_tau = 1  # 1=True, 0=False
+ot_eta = 1000
 
 MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
@@ -43,16 +43,16 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             for K in [256]:
-                for ot_eta in [1000]:                                          
+                for kernel_aux_weight in [100]:  # 0.0, 0.1
                         for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
                             for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
                                     for lr in [1e-3]:
                                         for hidden_size in [256]:
                                             for seed in [42]:                                                                                           
 
-                                                name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
+                                                name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
-                                                name = f'Normal_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'UpdatedActorLoss_{algo}_kw={kernel_aux_weight}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

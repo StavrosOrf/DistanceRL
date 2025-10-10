@@ -137,6 +137,7 @@ class SACDistanceAgentNew:
             f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")
         print(
             f"[Init] lr={lr}, gamma={gamma}, tau={tau}, rep_loss_weight={rep_loss_weight}, target_entropy={self.target_entropy:.2f}")
+        print(f'Kernel aux weight: {self.kernel_aux_weight}, kernel temp: {self.kernel_temp}, kernel cand: {self.kernel_cand}, kernel state k: {self.kernel_state_k}, kernel adaptive tau: {self.kernel_adaptive_tau}')
 
     @property
     def alpha(self):
@@ -223,6 +224,65 @@ class SACDistanceAgentNew:
                            (logp + self.target_entropy).detach()).mean()
         return actor_loss, alpha_loss
 
+    def _new_actor_alpha_loss(self, obs):
+        obs_n = self.obs_rms.normalize(obs)
+                
+        a, logp, _ = self.actor.sample(obs_n)
+
+        # sample candidates
+        obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
+            self.kernel_cand)
+        obs_c_n = self.obs_rms.normalize(obs_c)
+        act_c = self._env_to_action(act_env_c)
+
+        # kernel similarities in rep space
+        z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
+                          dim=1)                 # (B,H)
+
+        with torch.no_grad():
+            z_c = F.normalize(
+                self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
+
+        S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
+        
+        # Compute per-sample k based on cosine similarity threshold
+        cos_sim_threshold = 0.85
+        num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
+        k_per_sample = torch.clamp(
+            num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
+
+        S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
+
+        # adaptive tau per row
+        # if self.kernel_adaptive_tau:
+        W = torch.softmax(S_masked, dim=1)
+            # assert torch.isfinite(W).all(), "Non-finite weights in kernel auxiliary!"
+        # else:
+        #     W = torch.softmax(S_masked / max(1e-6, self.kernel_temp), dim=1)
+        #     raise NotImplementedError("Non-adaptive tau not implemented!")
+
+        # targets: critics' Q rather than returns (much better bias)
+        qc1, qc2 = self.qnet(obs_c_n, act_c)
+        qc = torch.min(qc1, qc2).unsqueeze(0)
+
+        # (B,1)
+        Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)        
+
+        alpha = self.log_alpha.exp()
+        entropy_loss = (alpha * logp).mean()     
+        actor_loss = entropy_loss - Qhat.mean()
+        alpha_loss = -(self.log_alpha *
+                        (logp + self.target_entropy).detach()).mean()
+        
+        logs = {"kernel/top_state_sim_mean": float(top_vals.mean().item()),
+                "kernel/aux_term": float(-Qhat.mean().item()),
+                "train/actor_entropy_loss": float(entropy_loss.item())}
+        
+        if wandb.run is not None:
+            wandb.log(logs, step=self.steps)
+
+        return actor_loss, alpha_loss
+
     def _rep_loss(self, obs, act_env, next_obs, done):
         # Use rep trunk and TARGET rep trunk (stop-grad on next)
         obs_n = self.obs_rms.normalize(obs)
@@ -248,7 +308,6 @@ class SACDistanceAgentNew:
         )
         return loss, info
 
-    # ---------- optional kernel auxiliary for actor ----------
     def _kernel_aux_term(self, obs):
         """Compute -E[Q_hat_kernel] with critics' Q as targets. Uses rep trunk; adaptive tau."""
         if self.kernel_aux_weight <= 0.0:
@@ -283,16 +342,6 @@ class SACDistanceAgentNew:
 
         # adaptive tau per row
         if self.kernel_adaptive_tau:
-            # sstd = S_masked.std(dim=1, keepdim=True) + 1e-6
-            #get sstd without including infs or nans
-            # sstd = torch.std(S_masked[torch.isfinite(S_masked)]) + 1e-6                      
-            # tau = self.kernel_temp * sstd
-            # print(f"Adaptive tau: {tau.item()}, sstd: {sstd.item()}")  
-            # divide by tau only non infinite
-            # print(f'S_masked before: {S_masked.shape}')
-            
-            # S_masked = S_masked / tau[]
-            # print(f'S_masked after: {S_masked.shape}')
             W = torch.softmax(S_masked, dim=1)
             assert torch.isfinite(W).all(), "Non-finite weights in kernel auxiliary!"
         else:
@@ -374,7 +423,7 @@ class SACDistanceAgentNew:
                               "step": self.steps}, step=self.steps)
 
                 # ---- Representation loss (with target rep trunk) ----
-                if self.rep_loss_weight > 0.0:
+                if self.rep_loss_weight > 0.0 and self.kernel_aux_weight > 0.0:
                     rep_loss, rep_info = self._rep_loss(
                         obs, act_env, next_obs, done_b)
                     self.optim_rep.zero_grad()
@@ -388,16 +437,17 @@ class SACDistanceAgentNew:
                     if wandb.run is not None:
                         wandb.log(rep_logs, step=self.steps)
 
-                # ---- Actor + alpha (plus optional kernel auxiliary) ----
-                actor_loss, alpha_loss = self._actor_alpha_loss(obs)
+                actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
+                # # ---- Actor + alpha (plus optional kernel auxiliary) ----
+                # actor_loss, alpha_loss = self._actor_alpha_loss(obs)
 
-                # kernel auxiliary shaping
-                if self.kernel_aux_weight > 0.0:
+                # # kernel auxiliary shaping
+                # if self.kernel_aux_weight > 0.0:
 
-                    aux, aux_logs = self._kernel_aux_term(obs)
-                    actor_loss = actor_loss + self.kernel_aux_weight * aux
-                    if wandb.run is not None:
-                        wandb.log(aux_logs, step=self.steps)
+                #     aux, aux_logs = self._kernel_aux_term(obs)
+                #     actor_loss = actor_loss + self.kernel_aux_weight * aux
+                #     if wandb.run is not None:
+                #         wandb.log(aux_logs, step=self.steps)
 
                 self.optim_actor.zero_grad()
                 actor_loss.backward()
