@@ -252,6 +252,9 @@ class SACDistanceAgentNew:
             num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
 
         S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
+        
+        #take top_vals without infinite values
+        top_vals = top_vals[torch.isfinite(top_vals)]
 
         # adaptive tau per row
         # if self.kernel_adaptive_tau:
