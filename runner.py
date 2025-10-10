@@ -16,7 +16,7 @@ eval_episodes = 10
 batch_size = 512
 total_steps = 1_000_000
 eval_freq = 5000
-updates_per_step = 1
+updates_per_step = 5
 rep_loss_weight = 0.1
 rep_gamma_shape = 1.0
 target_entropy_scale = 0.7
@@ -39,7 +39,7 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
+for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             for K in [256]:
@@ -52,7 +52,7 @@ for algo in ['sacWasserstein']:  # 'RTGRecDistRL', 'StochRTGRecRL'
 
                                                 name = f"gamma-{v_gamma}-lr={lr}-K={K}-seed={seed}"
 
-                                                name = f'ScheduledOT_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
+                                                name = f'Normal_{algo}_s={expl_sigma}-noise_type={noise_type}' +  '-' + name
                                                 
                                                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                                     f' --env-id {env}' + \

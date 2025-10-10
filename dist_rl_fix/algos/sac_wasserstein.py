@@ -5,7 +5,7 @@ import gymnasium as gym
 import torch, wandb
 import torch.nn.functional as F
 
-from dist_rl_fix.models.networks import DistanceTrunkWs, GaussianActor, TwinQ
+from dist_rl_fix.models.networks import DistanceTrunk, GaussianActor, TwinQ
 from dist_rl_fix.buffers.replay import ReplayBuffer
 from dist_rl_fix.representations import instate_advantage_rep_loss, sinkhorn_divergence
 from dist_rl_fix.utils import RunningMeanStd, polyak_update
@@ -74,7 +74,7 @@ class SACWassersteinAgent:
         self.q_targ = TwinQ(self.obs_dim, self.act_dim, hidden=hidden).to(self.device)
         self.q_targ.load_state_dict(self.qnet.state_dict())
 
-        self.rep_trunk = DistanceTrunkWs(self.obs_dim,
+        self.rep_trunk = DistanceTrunk(self.obs_dim,
                                        self.act_dim,
                                        hidden=hidden,
                                        out_dim=hidden).to(self.device)
@@ -109,7 +109,7 @@ class SACWassersteinAgent:
         # OT config
         self.ot_eta_start = ot_eta
         self.ot_eta_final = 0.00001
-        self.ot_eta_anneal = int(0.5 * total_steps)  # anneal over first half
+        self.ot_eta_anneal = int(0.3 * total_steps)  # anneal over first half
         self.ot_eps = ot_eps
         self.ot_iters = ot_iters
         self.ot_K = ot_K

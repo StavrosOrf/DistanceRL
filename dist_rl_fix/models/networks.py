@@ -18,18 +18,8 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-
-class DistanceTrunk(nn.Module):
-    """Representation trunk z(s,a) used for rep-loss / kernel (NOT for TD critics)."""
-    def __init__(self, obs_dim, act_dim, hidden=256):
-        super().__init__()
-        self.trunk = MLP(obs_dim + act_dim, hidden, hidden=hidden, layers=3)
-
-    def forward(self, obs, act):
-        x = torch.cat([obs, act], dim=-1)
-        return self.trunk(x)
     
-class DistanceTrunkWs(nn.Module):
+class DistanceTrunk(nn.Module):
     """
     State-conditional action embedding z(s,a) \in R^H.
     Used for value-aware metric and OT transport; NOT used by critics.

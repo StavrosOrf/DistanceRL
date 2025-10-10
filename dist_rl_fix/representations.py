@@ -19,8 +19,7 @@ def recursive_nstep_cosine_loss_ema(
     next_embeddings: torch.Tensor,     # z_targ(s', a'_targ)  (already stop-grad in caller)
     dones: torch.Tensor,               # (B,)
     nreturns: torch.Tensor,            # (B,)
-    discount: float = 0.99,
-    n: int = 20,
+    discount: float = 0.99,    
     gamma_shape: float = 1.0,
     lam: float = 0.5,
     huber_delta: float = 0.2,

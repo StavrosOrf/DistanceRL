@@ -354,3 +354,64 @@ class BetaEMA:
         else:
             self.val = self.decay * self.val + (1 - self.decay) * b
         return self.val
+    
+    
+def differentiable_topk(S_full, k_per_sample):
+        """
+        Fast vectorized differentiable top-k selection with per-sample k values.
+
+        Args:
+            S_full: [B, M] tensor of similarities/scores
+            k_per_sample: [B] int tensor where each element specifies k for that sample
+
+        Returns:
+            S_masked: [B, M] tensor with -inf for non-top-k elements, preserving gradients
+            top_vals: [B, K_max] tensor of top-k values (padded with -inf)
+            top_idx: [B, K_max] tensor of top-k indices (padded with last valid index)
+        """
+        B, M = S_full.shape
+        device = S_full.device
+
+        # Get maximum k across all samples
+        K_max = int(k_per_sample.max().item())
+        K_max = min(K_max, M)  # Ensure K_max doesn't exceed available elements
+
+        # Get top-K_max for all samples at once (vectorized)
+        top_vals_full, top_idx_full = torch.topk(
+            S_full, k=K_max, dim=1, largest=True)  # [B, K_max]
+
+        # Create a mask for valid top-k elements per sample
+        # For each row, we want to keep only the first k_per_sample[i] elements
+        k_mask = torch.arange(K_max, device=device).unsqueeze(
+            0).expand(B, -1)  # [B, K_max]
+        valid_mask = k_mask < k_per_sample.unsqueeze(1)  # [B, K_max]
+
+        # Apply mask to top_vals (set invalid entries to -inf)
+        top_vals = torch.where(valid_mask, top_vals_full,
+                               torch.tensor(float('-inf'), device=device))
+        top_idx = top_idx_full  # Keep all indices for reference
+
+        # Create the masked similarity matrix S_masked
+        # For each sample, get the threshold (minimum value to include)
+        # We need to handle the case where k_per_sample[i] might be 0
+        k_clamped = k_per_sample.clamp(min=1, max=K_max)  # [B]
+
+        # Gather the k-th largest value for each sample (the threshold)
+        # Use k_clamped - 1 as index since we're 0-indexed
+        batch_idx = torch.arange(B, device=device)
+        threshold_vals = top_vals_full[batch_idx, k_clamped - 1]  # [B]
+
+        # Create differentiable mask: S_full >= threshold for each row
+        threshold_vals = threshold_vals.unsqueeze(1)  # [B, 1]
+        S_masked = torch.where(
+            S_full >= threshold_vals,
+            S_full,
+            torch.tensor(float('-inf'), device=device)
+        )  # [B, M]
+
+        # Handle edge case: if k_per_sample[i] == 0, mask everything
+        zero_k_mask = (k_per_sample == 0).unsqueeze(1)  # [B, 1]
+        S_masked = torch.where(zero_k_mask, torch.tensor(
+            float('-inf'), device=device), S_masked)
+
+        return S_masked, top_vals, top_idx
