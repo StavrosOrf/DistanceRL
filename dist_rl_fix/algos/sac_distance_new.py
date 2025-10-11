@@ -3,6 +3,7 @@ from typing import Optional
 import gymnasium as gym
 import torch
 import wandb
+import math
 import torch.nn.functional as F
 
 from dist_rl_fix.models.networks import DistanceTrunk, GaussianActor, TwinQ
@@ -231,7 +232,7 @@ class SACDistanceAgentNew:
 
             # kernel similarities in rep space
             z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
-                            dim=1)                 # (B,H)
+                              dim=1)                 # (B,H)
 
             with torch.no_grad():
                 z_c = F.normalize(
@@ -241,13 +242,15 @@ class SACDistanceAgentNew:
 
             # Compute per-sample k based on cosine similarity threshold
             cos_sim_threshold = 0.85
-            num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
+            num_above_threshold = (
+                S_full > cos_sim_threshold).sum(dim=1)  # [B]
             # print(f'num_above_threshold: {num_above_threshold}')
             k_per_sample = torch.clamp(
                 num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
             # print(f'k_per_sample: {k_per_sample}')
 
-            S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
+            S_masked, top_vals, top_idx = differentiable_topk(
+                S_full, k_per_sample)
 
             # take top_vals without infinite values
             top_vals = top_vals[torch.isfinite(top_vals)]
@@ -267,10 +270,11 @@ class SACDistanceAgentNew:
 
         # in-state Qha
         else:
-            Qhat, logp = self._qhat_in_state(obs, K=32,
-                                       noise_std=0.1,
-                                       softmax_temp=1.0,
-                                       eps=0.05)
+            Qhat, logp = self._qhat_in_state(obs,
+                                             K=32,
+                                             noise_std=0.1,
+                                             softmax_temp=1.0,
+                                             eps=0.05)
 
         alpha = self.log_alpha.exp()
 
@@ -317,14 +321,48 @@ class SACDistanceAgentNew:
         )
         return loss, info
 
+    # def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
+    #                    softmax_temp: float = 1.0, eps: float = 0.05):
+
+    #     obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+    #     B = obs_n.shape[0]
+    #     obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
+
+    #     # propose K actions per current state
+    #     with torch.no_grad():
+    #         a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
+    #         if noise_std > 0:
+    #             a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+
+    #         z_k = F.normalize(self.rep_trunk_targ(
+    #             obs_rep, a_k), p=2, dim=1)  # (B*K,H)
+    #         q1k, q2k = self.q_targ(obs_rep, a_k)
+    #         qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
+
+    #     # anchor at current policy action
+    #     a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
+    #     z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
+    #                       p=2, dim=1)         # (B,H)
+
+    #     # cosine sims to K proposals for the *same* state
+    #     z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
+    #     S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
+
+    #     W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
+    #     if eps > 0.0:                                           # keep gradients alive
+    #         W = (1 - eps) * W + eps / K
+
+    #     Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
+    #     return Qhat, logp
+
     def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
                        softmax_temp: float = 1.0, eps: float = 0.05):
-        
+
         obs_n = self.obs_rms.normalize(obs)                     # (B,D)
         B = obs_n.shape[0]
         obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
 
-        # propose K actions per current state
+        # --- propose K actions per current state (stop-grad path for proposals) ---
         with torch.no_grad():
             a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
             if noise_std > 0:
@@ -333,23 +371,73 @@ class SACDistanceAgentNew:
             z_k = F.normalize(self.rep_trunk_targ(
                 obs_rep, a_k), p=2, dim=1)  # (B*K,H)
             q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
+            # (B,K,1)   (stop-grad)
+            qk = torch.min(q1k, q2k).view(B, K, 1)
 
-        # anchor at current policy action
-        a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
-        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
-                          p=2, dim=1)         # (B,H)
+        # --- anchor at current policy action (this branch carries gradients) ---
+        a_anchor, logp, _ = self.actor.sample(obs_n)            # (B,A)
+        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor), p=2, dim=1)  # (B,H)
 
-        # cosine sims to K proposals for the *same* state
+        # --- cosine sims to K proposals for the same state ---
         z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
-        S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
+        S = torch.einsum('bd,bkd->bk', z_i, z_k_view).clamp(-1.0, 1.0)  # (B,K)
 
-        W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
-        if eps > 0.0:                                           # keep gradients alive
-            W = (1 - eps) * W + eps / K
+        # --- kernel bandwidth τ: cosine-anneal + optional adaptive from row std ---
+        tau_row = self._kernel_tau_instate(
+            S, base_temp=softmax_temp)    # (B,1)
 
-        Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
+        # --- softmax weights with τ (plus tiny ε smoothing for stability) ---
+        W = torch.softmax(S / tau_row, dim=1)                   # (B,K)
+        if eps > 0.0:
+            W = (1.0 - eps) * W + eps / K
+
+        # --- advantage-centering: q̃_k = q_k - \bar q  (baseline is stop-grad) ---
+        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
+                                           keepdim=True).detach()  # (B,1,1)
+        # (B,K,1)
+        q_tilde = qk - q_bar
+
+        # --- centered readout ---
+        Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)            # (B,1)
+
+        # (optional) diagnostics
+        if wandb.run is not None:
+            wandb.log({
+                "kernel_instate/tau_mean": float(tau_row.mean().item()),
+                "kernel_instate/top_sim_mean": float(S.max(dim=1).values.mean().item()),
+                "kernel_instate/qbar_mean": float(q_bar.mean().item()),
+                "kernel_instate/qtilde_abs_mean": float(q_tilde.abs().mean().item()),
+            }, step=self.steps)
+
         return Qhat, logp
+
+    def _kernel_tau_instate(self, S_rowwise: torch.Tensor, base_temp: float) -> torch.Tensor:
+        """
+        S_rowwise: (B, K) cosine sims for a single state across K proposals.
+        Returns τ as (B,1). Uses cosine anneal τ_max->τ_min, plus optional adaptive bump from row std.
+        """
+        B = S_rowwise.size(0)
+        device = S_rowwise.device
+
+        # schedule window & bounds
+        T_sched = 200_000
+        # start wider than config
+        tau_max = max(0.75, float(base_temp))
+        tau_min = max(0.05, 0.30 * float(base_temp))   # end sharper
+
+        p = min(1.0, float(self.steps) / float(T_sched))
+        # cosine anneal: p=0 -> tau_max, p=1 -> tau_min
+        tau_sched = tau_min + 0.5 * \
+            (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
+
+        if getattr(self, "kernel_adaptive_tau", False):
+            row_std = S_rowwise.std(dim=1, keepdim=True).clamp(min=1e-4)
+            tau_row = torch.full(
+                (B, 1), tau_sched, device=device) + row_std  # c=1.0
+        else:
+            tau_row = torch.full((B, 1), tau_sched, device=device)
+
+        return tau_row  # (B,1)
 
     # ---------- training ----------
 
