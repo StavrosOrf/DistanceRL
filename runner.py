@@ -55,7 +55,7 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
                             # +  '-' + name
-                            name = f'Qbalanced_ActorTemp_InState32_Check_lrAdjust_MaxGradNorm_QTarget_NoisyRep_{algo}'
+                            name = f'InState64_Check_lrAdjust_MaxGradNorm_QTarget_NoisyRep_{algo}'
 
                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                 f' --env-id {env}' + \

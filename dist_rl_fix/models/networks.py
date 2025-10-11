@@ -4,6 +4,80 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# -----------------------
+# Shared building blocks
+# -----------------------
+
+class NoisyLinear(nn.Module):
+    """
+    Factorized NoisyNet layer (Fortunato et al., 2018).
+    Use 'use_noisy=True' on Q heads for Rainbow-style exploration on Atari.
+    """
+    def __init__(self, in_features, out_features, sigma_init=0.5):
+        super().__init__()
+        self.in_features, self.out_features = in_features, out_features
+        self.weight_mu = nn.Parameter(torch.empty(out_features, in_features))
+        self.weight_sigma = nn.Parameter(torch.empty(out_features, in_features))
+        self.bias_mu = nn.Parameter(torch.empty(out_features))
+        self.bias_sigma = nn.Parameter(torch.empty(out_features))
+        self.register_buffer("eps_w", torch.empty(out_features, in_features))
+        self.register_buffer("eps_b", torch.empty(out_features))
+        self.sigma_init = sigma_init
+        self.reset_parameters()
+
+    def reset_parameters(self):
+        mu_range = 1.0 / math.sqrt(self.in_features)
+        self.weight_mu.data.uniform_(-mu_range, mu_range)
+        self.bias_mu.data.uniform_(-mu_range, mu_range)
+        self.weight_sigma.data.fill_(self.sigma_init / math.sqrt(self.in_features))
+        self.bias_sigma.data.fill_(self.sigma_init / math.sqrt(self.out_features))
+
+    def _f(self, x):
+        return x.sign().mul_(x.abs().sqrt_())
+
+    def sample_noise(self):
+        eps_in = torch.randn(self.in_features, device=self.weight_mu.device)
+        eps_out = torch.randn(self.out_features, device=self.weight_mu.device)
+        self.eps_w.copy_(self._f(eps_out).outer(self._f(eps_in)))
+        self.eps_b.copy_(self._f(eps_out))
+
+    def forward(self, x):
+        if self.training:
+            self.sample_noise()
+            w = self.weight_mu + self.weight_sigma * self.eps_w
+            b = self.bias_mu + self.bias_sigma * self.eps_b
+        else:
+            w = self.weight_mu
+            b = self.bias_mu
+        return F.linear(x, w, b)
+
+
+class NatureCNN(nn.Module):
+    """
+    Classic DQN encoder:
+      Conv(32,8x8,s4) -> Conv(64,4x4,s2) -> Conv(64,3x3,s1) -> Flatten -> Linear(512)
+    Expects channel-first images [B, C, H, W] with values in [0,1].
+    """
+    def __init__(self, in_channels: int):
+        super().__init__()
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_channels, 32, kernel_size=8, stride=4), nn.ReLU(inplace=True),
+            nn.Conv2d(32, 64, kernel_size=4, stride=2),          nn.ReLU(inplace=True),
+            nn.Conv2d(64, 64, kernel_size=3, stride=1),          nn.ReLU(inplace=True),
+        )
+        # 84x84 input → 7x7 after convs; 64*7*7 = 3136
+        self.fc = nn.Sequential(nn.Linear(3136, 512), nn.ReLU(inplace=True))
+
+    def forward(self, x):
+        x = self.conv(x)
+        x = x.view(x.size(0), -1)
+        return self.fc(x)  # [B, 512]
+
+
+# -----------------------
+# Vector/continuous path
+# -----------------------
+
 class MLP(nn.Module):
     """Plain MLP (no LayerNorm)."""
     def __init__(self, in_dim, out_dim, hidden=256, layers=2, act=nn.ReLU):
@@ -18,11 +92,12 @@ class MLP(nn.Module):
 
     def forward(self, x):
         return self.net(x)
-    
+
+
 class DistanceTrunk(nn.Module):
     """
-    State-conditional action embedding z(s,a) \in R^H.
-    Used for value-aware metric and OT transport; NOT used by critics.
+    State-conditional action embedding z(s,a) \in R^H for vector observations & continuous actions.
+    Used for value-aware metric; NOT shared with critics.
     """
     def __init__(self, obs_dim, act_dim, hidden=256, out_dim=256, layers=3):
         super().__init__()
@@ -32,8 +107,9 @@ class DistanceTrunk(nn.Module):
         x = torch.cat([obs, act], dim=-1)
         return self.net(x)
 
+
 class GaussianActor(nn.Module):
-    """Tanh-Gaussian policy."""
+    """Tanh-Gaussian policy for continuous action spaces."""
     def __init__(self, obs_dim, act_dim, hidden=256, log_std_bounds=(-5, 1)):
         super().__init__()
         self.net = MLP(obs_dim, hidden, hidden=hidden, layers=2)
@@ -61,11 +137,9 @@ class GaussianActor(nn.Module):
         logp -= torch.log(1 - action.pow(2) + 1e-6).sum(-1, keepdim=True)
         return action, logp, torch.tanh(mu)
 
+
 class TwinQ(nn.Module):
-    """
-    Twin critics with separate encoders (no sharing with rep trunk).
-    Input: (obs, act), both in normalized / [-1,1] spaces.
-    """
+    """Twin critics for vector obs + continuous actions: Q(s,a) each as MLP."""
     def __init__(self, obs_dim, act_dim, hidden=256):
         super().__init__()
         self.q1 = MLP(obs_dim + act_dim, 1, hidden=hidden, layers=2)
@@ -74,3 +148,92 @@ class TwinQ(nn.Module):
     def forward(self, obs, act):
         x = torch.cat([obs, act], dim=-1)
         return self.q1(x), self.q2(x)
+
+
+# -----------------------
+# Image/discrete (Atari)
+# -----------------------
+
+class VisualDistanceTrunk(nn.Module):
+    """
+    z(s,a) for images + discrete actions.
+    - Encode s with NatureCNN
+    - Embed a with nn.Embedding
+    - Fuse [phi(s), e(a)] via MLP → z(s,a)
+    """
+    def __init__(self, obs_channels: int, n_actions: int, out_dim: int = 256, hidden: int = 512, emb_dim: int = 128):
+        super().__init__()
+        self.encoder = NatureCNN(obs_channels)
+        self.a_emb = nn.Embedding(n_actions, emb_dim)
+        self.fuse = MLP(512 + emb_dim, out_dim, hidden=hidden, layers=2)
+
+    def forward(self, obs_img: torch.Tensor, a_idx: torch.Tensor):
+        # obs_img: [B,C,H,W]; a_idx: [B] (long)
+        phi = self.encoder(obs_img)                 # [B, 512]
+        ea = self.a_emb(a_idx.long())               # [B, emb_dim]
+        return self.fuse(torch.cat([phi, ea], dim=-1))
+
+
+class CategoricalActorVisual(nn.Module):
+    """
+    Categorical policy π(a|s) over discrete actions for images.
+    Produces logits; sampling returns (a, logp_a).
+    """
+    def __init__(self, obs_channels: int, n_actions: int, use_noisy: bool = False):
+        super().__init__()
+        self.encoder = NatureCNN(obs_channels)
+        linear = NoisyLinear if use_noisy else nn.Linear
+        self.policy = nn.Sequential(
+            linear(512, 512), nn.ReLU(inplace=True),
+            linear(512, n_actions)
+        )
+
+    def forward(self, obs_img: torch.Tensor):
+        h = self.encoder(obs_img)                   # [B, 512]
+        logits = self.policy(h)                     # [B, A]
+        return logits
+
+    @torch.no_grad()
+    def act_greedy(self, obs_img: torch.Tensor):
+        logits = self.forward(obs_img)
+        return torch.argmax(logits, dim=-1)         # [B]
+
+    def sample(self, obs_img: torch.Tensor):
+        logits = self.forward(obs_img)
+        log_pi = torch.log_softmax(logits, dim=-1)  # [B, A]
+        pi = log_pi.exp()
+        a = torch.distributions.Categorical(probs=pi).sample()  # [B]
+        # log prob of sampled actions
+        logp_a = log_pi.gather(1, a.view(-1, 1))   # [B,1]
+        return a, logp_a, logits
+
+
+class DiscreteTwinQVisual(nn.Module):
+    """
+    Twin Q for images + discrete actions.
+    Dueling heads (Rainbow ingredient) with optional NoisyLinear.
+    Forward returns Q1(s, :) and Q2(s, :) => [B, A].
+    """
+    def __init__(self, obs_channels: int, n_actions: int, use_noisy: bool = True):
+        super().__init__()
+        self.encoder = NatureCNN(obs_channels)
+
+        def dueling_head():
+            linear = NoisyLinear if use_noisy else nn.Linear
+            value = nn.Sequential(linear(512, 512), nn.ReLU(inplace=True), linear(512, 1))
+            adv   = nn.Sequential(linear(512, 512), nn.ReLU(inplace=True), linear(512, n_actions))
+            return value, adv
+
+        self.v1, self.a1 = dueling_head()
+        self.v2, self.a2 = dueling_head()
+
+    def _dueling(self, h, v_head, a_head):
+        v = v_head(h)                # [B,1]
+        a = a_head(h)                # [B,A]
+        return v + a - a.mean(dim=1, keepdim=True)
+
+    def forward(self, obs_img: torch.Tensor):
+        h = self.encoder(obs_img)    # [B,512]
+        q1 = self._dueling(h, self.v1, self.a1)
+        q2 = self._dueling(h, self.v2, self.a2)
+        return q1, q2

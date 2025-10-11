@@ -10,9 +10,7 @@ from dist_rl_fix.models.networks import DistanceTrunk, GaussianActor, TwinQ
 from dist_rl.utils import RolloutBuffer, differentiable_topk
 from dist_rl_fix.representations import recursive_nstep_cosine_loss_ema, BetaEMA
 from dist_rl_fix.utils import (RunningMeanStd,
-                               polyak_update,
-                               sinkhorn_transport_cost,
-                               pairwise_cosine_cost)
+                               polyak_update)
 
 
 class SACDistanceAgentNew:
@@ -218,7 +216,9 @@ class SACDistanceAgentNew:
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
 
     def _new_actor_alpha_loss(self, obs):
-        instate = True  # choose in-state Qhat
+        
+        instate = False  # choose in-state Qhat
+        
         if instate:
             obs_n = self.obs_rms.normalize(obs)
 
@@ -268,13 +268,20 @@ class SACDistanceAgentNew:
             Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
             # print(f'Qhat mean: {Qhat.mean().item()}')
 
-        # in-state Qha
+        # in-state Qhat
         else:
             Qhat, logp = self._qhat_in_state(obs,
                                              K=32,
                                              noise_std=0.1,
                                              softmax_temp=1.0,
                                              eps=0.05)
+            
+            #Normalized in-state Qhat
+            # Qhat, logp = self._qhat_in_state_norm(obs,
+            #                                  K=32,
+            #                                  noise_std=0.1,
+            #                                  softmax_temp=1.0,
+            #                                  eps=0.05)
 
         alpha = self.log_alpha.exp()
 
@@ -284,7 +291,8 @@ class SACDistanceAgentNew:
         alpha_loss = -(self.log_alpha *
                        (logp + self.target_entropy).detach()).mean()
 
-        logs = {"kernel/top_state_sim_mean": float(top_vals.mean().item()),
+        logs = {
+                # "kernel/top_state_sim_mean": float(top_vals.mean().item()),
                 "kernel/aux_term": float(-Qhat.mean().item()),
                 "train/actor_entropy_loss": float(entropy_loss.item())}
 
@@ -321,41 +329,41 @@ class SACDistanceAgentNew:
         )
         return loss, info
 
-    # def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
-    #                    softmax_temp: float = 1.0, eps: float = 0.05):
-
-    #     obs_n = self.obs_rms.normalize(obs)                     # (B,D)
-    #     B = obs_n.shape[0]
-    #     obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
-
-    #     # propose K actions per current state
-    #     with torch.no_grad():
-    #         a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
-    #         if noise_std > 0:
-    #             a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
-
-    #         z_k = F.normalize(self.rep_trunk_targ(
-    #             obs_rep, a_k), p=2, dim=1)  # (B*K,H)
-    #         q1k, q2k = self.q_targ(obs_rep, a_k)
-    #         qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
-
-    #     # anchor at current policy action
-    #     a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
-    #     z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
-    #                       p=2, dim=1)         # (B,H)
-
-    #     # cosine sims to K proposals for the *same* state
-    #     z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
-    #     S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
-
-    #     W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
-    #     if eps > 0.0:                                           # keep gradients alive
-    #         W = (1 - eps) * W + eps / K
-
-    #     Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
-    #     return Qhat, logp
-
     def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
+                       softmax_temp: float = 1.0, eps: float = 0.05):
+
+        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        B = obs_n.shape[0]
+        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
+
+        # propose K actions per current state
+        with torch.no_grad():
+            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
+            if noise_std > 0:
+                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+
+            z_k = F.normalize(self.rep_trunk_targ(
+                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
+            q1k, q2k = self.q_targ(obs_rep, a_k)
+            qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
+
+        # anchor at current policy action
+        a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
+        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
+                          p=2, dim=1)         # (B,H)
+
+        # cosine sims to K proposals for the *same* state
+        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
+        S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
+
+        W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
+        if eps > 0.0:                                           # keep gradients alive
+            W = (1 - eps) * W + eps / K
+
+        Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
+        return Qhat, logp
+
+    def _qhat_in_state_norm(self, obs, K: int = 64, noise_std: float = 0.1,
                        softmax_temp: float = 1.0, eps: float = 0.05):
 
         obs_n = self.obs_rms.normalize(obs)                     # (B,D)
