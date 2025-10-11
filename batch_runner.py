@@ -11,14 +11,14 @@ import random
 
 # ---------------- General configuration ----------------
 
-partition = 'gpu-a100'  # gpu-a100 # gpu-a100-small # gpu, compute
-algo = 'SACDistanceAgentNew'
+partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
+algo = ['SACDistanceAgentNew']
 group_name = "Ablation_"
 project_name = "DistRL_Rep"
 
 # resource configuration
 device = 'cuda' if partition != 'compute' else 'cpu'
-job_hours = 4 if partition == 'gpu-a100-small' else 10
+job_hours = 4 if partition == 'gpu-a100-small' else 15
 
 cpu_cores = 1 if partition != 'compute' else 2
 memory_per_cpu = '5300' if partition != 'compute' else '3800'
@@ -37,6 +37,7 @@ val_training_start_default = 10_000
 total_steps_default = 2_500_000
 eval_freq_default = 5000
 updates_per_step_default = 1
+expl_sigma = 0.1
 
 rep_gamma_shape = 0.5
 
@@ -46,22 +47,20 @@ kernel_cand_default = 2048
 kernel_state_k_default = 64
 kernel_adaptive_tau_default = 1
 
+SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
-               'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
+               'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5'] #number of envs: 9
 BOX2D_ENVS = ['LunarLanderContinuous-v3',
-              'MountainCarContinuous-v0', 'Pendulum-v1']
-CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
+              'MountainCarContinuous-v0', 'Pendulum-v1'] #number of envs: 3
+CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1'] #number of envs: 2
 
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 # ---------------- Ablation grids ----------------
-# "HalfCheetah-v5", "Hopper-v5", "Walker2d-v5", "Ant-v5", "Humanoid-v5"
-env_grid = ['HalfCheetah-v5']
 batch_size_grid = [512]
 K_grid = [256]
-expl_sigma_grid = [0.1]
 lr_grid = [1e-3]  # [1e-3]
-seed_grid = [42, 32, 12]
+seed_grid = [42]
 target_entropy_scale_grid = [1]
 kernel_aux_weight_grid = [0.1]
 
@@ -69,14 +68,17 @@ kernel_aux_weight_grid = [0.1]
 if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
-for env in env_grid:
-    for batch_size in batch_size_grid:
-        for K in K_grid:
-            for expl_sigma in expl_sigma_grid:
+for env in continuous_envs:
+    for algo in SB3_ALGOS:  # SB3_ALGOS:
+        for batch_size in batch_size_grid:
+            for K in K_grid:            
                 for lr in lr_grid:
                     for seed in seed_grid:
                         for target_entropy_scale in target_entropy_scale_grid:
                             for kernel_aux_weight in kernel_aux_weight_grid:
+                                
+                                if algo in SB3_ALGOS:
+                                    job_hours = 7
 
                                 env_tag = env.replace('-', '')
                                 run_id = (f"{env_tag}"
