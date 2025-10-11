@@ -202,12 +202,7 @@ class SACDistanceAgentNew:
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
             alpha = self.alpha if self._alpha_fixed else self.log_alpha.exp()
-            # tensor alpha with floor (keeps gradients when not fixed)
-            # alpha_t = (torch.tensor(self._alpha, device=self.device) if self._alpha_fixed
-            #         else self.log_alpha.exp())
-            # alpha_t = torch.clamp(alpha_t, min=self.alpha_min)
 
-            # alpha = torch.clamp(alpha, min=0.02)
             target = r.unsqueeze(-1) + self.gamma * \
                 (1 - d.unsqueeze(-1)) * (qt - alpha * logp2)
         return target
@@ -222,59 +217,60 @@ class SACDistanceAgentNew:
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
 
     def _new_actor_alpha_loss(self, obs):
-        obs_n = self.obs_rms.normalize(obs)
+        instate = True  # choose in-state Qhat
+        if instate:
+            obs_n = self.obs_rms.normalize(obs)
 
-        a, logp, _ = self.actor.sample(obs_n)
+            a, logp, _ = self.actor.sample(obs_n)
 
-        # sample candidates
-        obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
-            self.kernel_cand)
-        obs_c_n = self.obs_rms.normalize(obs_c)
-        act_c = self._env_to_action(act_env_c)
+            # sample candidates
+            obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
+                self.kernel_cand)
+            obs_c_n = self.obs_rms.normalize(obs_c)
+            act_c = self._env_to_action(act_env_c)
 
-        # kernel similarities in rep space
-        z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
-                          dim=1)                 # (B,H)
+            # kernel similarities in rep space
+            z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
+                            dim=1)                 # (B,H)
 
-        with torch.no_grad():
-            z_c = F.normalize(
-                self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
+            with torch.no_grad():
+                z_c = F.normalize(
+                    self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
 
-        S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
+            S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
 
-        # Compute per-sample k based on cosine similarity threshold
-        cos_sim_threshold = 0.85
-        num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
-        # print(f'num_above_threshold: {num_above_threshold}')
-        k_per_sample = torch.clamp(
-            num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
-        # print(f'k_per_sample: {k_per_sample}')
+            # Compute per-sample k based on cosine similarity threshold
+            cos_sim_threshold = 0.85
+            num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
+            # print(f'num_above_threshold: {num_above_threshold}')
+            k_per_sample = torch.clamp(
+                num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
+            # print(f'k_per_sample: {k_per_sample}')
 
-        S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
+            S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
 
-        # take top_vals without infinite values
-        top_vals = top_vals[torch.isfinite(top_vals)]
+            # take top_vals without infinite values
+            top_vals = top_vals[torch.isfinite(top_vals)]
 
-        # adaptive tau per row
-        # if self.kernel_adaptive_tau:
-        W = torch.softmax(S_masked, dim=1)
+            # adaptive tau per row
+            # if self.kernel_adaptive_tau:
+            W = torch.softmax(S_masked, dim=1)
 
-        # targets: critics' Q rather than returns (much better bias)
-        with torch.no_grad():
-            qc1, qc2 = self.q_targ(obs_c_n, act_c)
-            qc = torch.min(qc1, qc2).unsqueeze(0)
+            # targets: critics' Q rather than returns (much better bias)
+            with torch.no_grad():
+                qc1, qc2 = self.q_targ(obs_c_n, act_c)
+                qc = torch.min(qc1, qc2).unsqueeze(0)
 
-        # (B,1)
-        Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
-        # print(f'Qhat mean: {Qhat.mean().item()}')
+            # (B,1)
+            Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
+            # print(f'Qhat mean: {Qhat.mean().item()}')
 
-        # in-state Qhat
-        # Qhat_in = self._qhat_in_state(obs, K=64, noise_std=0.1, softmax_temp=1.0, eps=0.05)
-
-        # mix: favor cross-state early, then in-state later
-        # mix = 0.5#1.0 if self.steps >= 50_000 else 0.5
-        # Qhat = mix * Qhat_in + (1.0 - mix) * Qhat
-        # Qhat = Qhat_in
+        # in-state Qha
+        else:
+            Qhat, logp = self._qhat_in_state(obs, K=32,
+                                       noise_std=0.1,
+                                       softmax_temp=1.0,
+                                       eps=0.05)
 
         alpha = self.log_alpha.exp()
 
@@ -290,112 +286,6 @@ class SACDistanceAgentNew:
 
         if wandb.run is not None:
             wandb.log(logs, step=self.steps)
-
-        return actor_loss, alpha_loss
-
-    def _actor_loss_ot_only(self,
-                            obs,
-                            N_samples: int = 8,
-                            ot_eps: float = 0.05,
-                            ot_iters: int = 10,
-                            # how strongly Q re-weights targets (stop-grad)
-                            beta_Q: float = 5.0,
-                            tau_sim: float = 0.5,        # softmax temperature for state-conditioned selection
-                            topk: int = None,
-                            lambda_ot: float = 1.0,
-                            use_entropy: bool = True):
-        """
-        OT-only guidance:  L_actor = alpha * E[log pi(a|s)] + lambda_ot * OT_cost
-        No direct Q-max term. Q/returns affect only the target weights (detached).
-        """
-        device = self.device
-        B = obs.shape[0]
-        obs_n = self.obs_rms.normalize(obs)
-
-        # ====== draw N actions per state from current policy ======
-        obs_rep = obs_n.repeat_interleave(N_samples, dim=0)  # (B*N, obs)
-        aN, logpN, _ = self.actor.sample(obs_rep)            # (B*N, A)
-        # embeddings with the *target* trunk (frozen params but differentiable wrt a)
-        zN = F.normalize(self.rep_trunk_targ(obs_rep, aN),
-                         p=2, dim=1).view(B, N_samples, -1)
-        logpN = logpN.view(B, N_samples)
-
-        # ====== build the target measure from a replay candidate pool ======
-        obs_c, _, act_env_c, ret_c, _ = self.replay.get_batch(self.kernel_cand)
-        obs_c_n = self.obs_rms.normalize(obs_c)
-        act_c = self._env_to_action(act_env_c)
-
-        with torch.no_grad():
-            zC_full = F.normalize(self.rep_trunk_targ(
-                obs_c_n, act_c), p=2, dim=1)    # (K_full, D)
-            # critic only for *weights* (no grad)
-            q1c, q2c = self.q_targ(obs_c_n, act_c)
-            # (K_full,)
-            qc = torch.min(q1c, q2c).squeeze(-1)
-            # normalize for stability
-            qc = (qc - qc.mean()) / (qc.std() + 1e-6)
-
-        # ----- per-state top-k selection (state-conditioned) -----
-        if topk is None:
-            topk = self.kernel_state_k
-
-        with torch.no_grad():
-            # (B, D)
-            z_anchor = zN[:, 0, :]
-            # cosine similarity between each state anchor and all candidates
-            # (B, K_full)
-            S = z_anchor @ zC_full.T
-
-            # Guard against asking for more neighbors than available candidates
-            k_available = S.size(1)
-            if k_available == 0:
-                raise RuntimeError("No candidate states available for top-k selection; replay buffer may be empty")
-            k_select = min(topk, k_available)
-            top_vals, top_idx = torch.topk(
-                S, k=k_select, dim=1)                          # (B, k_select)
-
-            zC = torch.gather(
-                zC_full.unsqueeze(0).expand(B, -1, -1),
-                1,
-                top_idx.unsqueeze(-1).expand(B, k_select, zC_full.size(1))
-            )  # (B, k_select, D)
-
-            # (B, topk)
-            qc_sel = qc[top_idx]
-
-        # target weights per state: combine Q-scores and similarity, then softmax
-        b_logits = beta_Q * qc_sel + top_vals / \
-            tau_sim                               # (B, topk)
-        # (B, topk)
-        b = torch.softmax(b_logits, dim=1)
-        a_w = torch.full((B, N_samples), 1.0 / N_samples,
-                         device=device)              # (B, N)
-
-        # ====== OT transport cost between (zN, a_w) and (zC, b) ======
-        # (B, N, topk)
-        C = pairwise_cosine_cost(zN, zC)
-        ot_cost = sinkhorn_transport_cost(
-            C, a_w, b, epsilon=ot_eps, n_iters=ot_iters).mean()
-
-        # ====== final actor loss (no direct Q term) ======
-        if use_entropy:
-            alpha = self.log_alpha.exp()
-            entropy_loss = (alpha * logpN).mean()
-            actor_loss = entropy_loss + lambda_ot * ot_cost
-            # standard alpha update (or set target_entropy_scale=0 to disable)
-            alpha_loss = -(self.log_alpha *
-                           (logpN + self.target_entropy).detach()).mean()
-        else:
-            actor_loss = lambda_ot * ot_cost
-            alpha_loss = torch.zeros((), device=device)
-
-        # logging
-        if wandb.run is not None:
-            wandb.log({
-                "ot/ot_cost": float(ot_cost.item()),
-                "ot/top_state_sim_mean": float(top_vals.mean().item()),
-                "ot/target_entropy": float(self.target_entropy),
-            }, step=self.steps)
 
         return actor_loss, alpha_loss
 
@@ -427,9 +317,9 @@ class SACDistanceAgentNew:
         )
         return loss, info
 
-    # --- Fix 3: in-state kernel proposals (uses target nets for stability) ---
     def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
                        softmax_temp: float = 1.0, eps: float = 0.05):
+        
         obs_n = self.obs_rms.normalize(obs)                     # (B,D)
         B = obs_n.shape[0]
         obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
@@ -446,7 +336,7 @@ class SACDistanceAgentNew:
             qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
 
         # anchor at current policy action
-        a_anchor, _, _ = self.actor.sample(obs_n)               # (B,A)
+        a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
         z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
                           p=2, dim=1)         # (B,H)
 
@@ -459,7 +349,7 @@ class SACDistanceAgentNew:
             W = (1 - eps) * W + eps / K
 
         Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
-        return Qhat
+        return Qhat, logp
 
     # ---------- training ----------
 
@@ -541,17 +431,7 @@ class SACDistanceAgentNew:
                     if wandb.run is not None:
                         wandb.log(rep_logs, step=self.steps)
 
-                # actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
-
-                actor_loss, alpha_loss = self._actor_loss_ot_only(obs,
-                                                                  N_samples=8,
-                                                                #   ot_eps=self.ot_eps,
-                                                                #   ot_iters=self.ot_iters,
-                                                                #   beta_Q=self.beta,
-                                                                  tau_sim=self.kernel_temp,
-                                                                  topk=self.kernel_state_k,
-                                                                  lambda_ot=1.0,
-                                                                  use_entropy=True)
+                actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
 
                 self.optim_actor.zero_grad()
                 actor_loss.backward()

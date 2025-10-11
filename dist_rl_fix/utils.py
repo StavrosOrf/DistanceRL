@@ -135,36 +135,97 @@ def approx_spearman_r(x: torch.Tensor, y: torch.Tensor) -> float:
     return float(r)
 
 
+import torch
+import torch.nn.functional as F
+
+# ---------- geometry / cost ----------
+
 def pairwise_cosine_cost(Zp: torch.Tensor, Zc: torch.Tensor) -> torch.Tensor:
     """
-    Zp: (B, N, D) policy embeddings; Zc: (B, K, D) candidate embeddings (both L2-normalized)
-    Returns cost matrix C = 1 - cosine(zp, zc) of shape (B, N, K).
+    Cosine cost C = 1 - cos(zp, zc).
+    Zp: (B, N, D)  policy embeddings
+    Zc: (B, K, D)  candidate embeddings
+    returns: (B, N, K)
     """
-    # (B,N,D) @ (B,D,K) -> (B,N,K)
-    cos = torch.einsum('bnd,bkd->bnk', Zp, Zc)
-    return 1.0 - cos.clamp(-1.0, 1.0)
+    # cosine = <zp, zc> assuming L2-normalized inputs
+    cos = torch.einsum('bnd,bkd->bnk', Zp, Zc).clamp(-1.0, 1.0)
+    return 1.0 - cos
 
-def sinkhorn_transport_cost(C: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
-                            epsilon: float = 0.05, n_iters: int = 10) -> torch.Tensor:
+
+def sinkhorn_transport_cost(C: torch.Tensor,
+                            a: torch.Tensor,
+                            b: torch.Tensor,
+                            epsilon: float = 0.05,
+                            n_iters: int = 20) -> torch.Tensor:
     """
-    Batched log-domain Sinkhorn. 
-    C: (B,N,K) cost, a: (B,N) source weights, b: (B,K) target weights.
-    Returns: OT cost per batch element, shape (B,)
+    Entropic OT cost <P, C>, with stable log-domain Sinkhorn.
+    C: (B, N, K), a: (B, N), b: (B, K)
     """
-    B, N, K = C.shape
+    # safety: normalize a,b to sum=1 per batch
+    a = a / (a.sum(dim=1, keepdim=True) + 1e-8)
+    b = b / (b.sum(dim=1, keepdim=True) + 1e-8)
+
+    log_a = torch.log(a + 1e-8)                 # (B,N)
+    log_b = torch.log(b + 1e-8)                 # (B,K)
+    logK  = -C / max(epsilon, 1e-8)             # (B,N,K)
+
+    # dual potentials
+    u = torch.zeros_like(log_a)                 # (B,N)
+    v = torch.zeros_like(log_b)                 # (B,K)
+
+    for _ in range(n_iters):
+        # u update: sum over K
+        u = log_a - torch.logsumexp(logK + v.unsqueeze(1), dim=2)               # (B,N)
+        # v update: sum over N  (NOTE: unsqueeze(1), not unsqueeze(2))
+        v = log_b - torch.logsumexp(logK.transpose(1, 2) + u.unsqueeze(1), dim=2)  # (B,K)
+
+    logP = u.unsqueeze(2) + logK + v.unsqueeze(1)   # (B,N,K)
+    P    = torch.exp(logP)
+    cost = (P * C).sum(dim=(1, 2))
+    return cost
+
+
+def sinkhorn_plan(C: torch.Tensor,
+                  a: torch.Tensor,
+                  b: torch.Tensor,
+                  epsilon: float = 0.05,
+                  n_iters: int = 20):
+    """
+    Returns transport plan P and cost.
+    C: (B,N,K), a: (B,N), b: (B,K)
+    """
+    a = a / (a.sum(dim=1, keepdim=True) + 1e-8)
+    b = b / (b.sum(dim=1, keepdim=True) + 1e-8)
+
     log_a = torch.log(a + 1e-8)
     log_b = torch.log(b + 1e-8)
-    logK = -C / epsilon  # (B,N,K)
+    logK  = -C / max(epsilon, 1e-8)
 
-    # dual potentials in log-domain
     u = torch.zeros_like(log_a)
     v = torch.zeros_like(log_b)
 
     for _ in range(n_iters):
-        u = log_a - torch.logsumexp(logK + v.unsqueeze(1), dim=2)        # (B,N)
-    v = log_b - torch.logsumexp(logK.transpose(1,2) + u.unsqueeze(1), dim=2)  # (B,K)
+        u = log_a - torch.logsumexp(logK + v.unsqueeze(1), dim=2)                   # (B,N)
+        v = log_b - torch.logsumexp(logK.transpose(1, 2) + u.unsqueeze(1), dim=2)  # (B,K)
 
     logP = u.unsqueeze(2) + logK + v.unsqueeze(1)   # (B,N,K)
-    P = torch.exp(logP)                             # transport plan
-    cost = (P * C).sum(dim=(1,2))                   # (B,)
-    return cost
+    P    = torch.exp(logP)
+    cost = (P * C).sum(dim=(1, 2))
+    return P, cost
+
+
+# ---------- soft-KNN state-conditioned selection (optional helper) ----------
+
+def soft_knn_indices(z_anchor: torch.Tensor,
+                     zC_full: torch.Tensor,
+                     knn: int,
+                     tau_sim: float) -> torch.Tensor:
+    """
+    z_anchor: (B, D)     per-state anchor (e.g., mean policy embedding)
+    zC_full: (Kf, D)     full candidate pool embeddings (L2-normalized)
+    returns: indices (B, knn) of candidates with highest soft-KNN mass
+    """
+    S = (z_anchor @ zC_full.T) / max(tau_sim, 1e-6)    # (B, Kf), temperature-scaled cosine
+    # pick top-k by softmass (equivalent to top-k cosine since softmax is monotone)
+    idx = torch.topk(S, k=min(knn, zC_full.size(0)), dim=1).indices
+    return idx
