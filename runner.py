@@ -21,6 +21,9 @@ rep_loss_weight = 0.1
 rep_gamma_shape = 0.5
 target_entropy_scale = 1
 comp_samples = 4096
+noise_type = "OU"  # "OU", "SchedOU", "Normal"
+expl_sigma = 0.1  # 0.1, 0.2,
+K = 256
 
 alpha_cql = 0.0
 
@@ -32,7 +35,8 @@ ot_eta = 1000
 
 MUJOCO_ENVS = ['Ant-v5', 'HalfCheetah-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']
-BOX2D_ENVS = ['LunarLanderContinuous-v3', 'MountainCarContinuous-v0', 'Pendulum-v1']
+BOX2D_ENVS = ['LunarLanderContinuous-v3',
+              'MountainCarContinuous-v0', 'Pendulum-v1']
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 
 PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
@@ -43,52 +47,50 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             rep_gamma_shape = v_gamma
-            for K in [256]:
-                for kernel_aux_weight in [100]:  # 0.0, 0.1
-                        for noise_type in ["OU"]: # "OU", "SchedOU", "Normal"
-                            for expl_sigma in [0.1]:  # 0.1, 0.2, 0.3
-                                    for lr in [1e-3]:
-                                        for hidden_size in [256]:
-                                            for seed in [42]:                                                                                           
+            for kernel_aux_weight in [100]:  # 0.0, 0.1
+                for lr in [1e-3]:
+                    for hidden_size in [256]:
+                        for seed in [42]:
 
-                                                name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
+                            # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
-                                                name = f'AlphaFix_NoisyRep_{algo}_kw={kernel_aux_weight}' +  '-' + name
-                                                
-                                                command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
-                                                    f' --env-id {env}' + \
-                                                    f' --algo {algo}' + \
-                                                    f' --device {device}' + \
-                                                    f' --batch-size {batch_size}' + \
-                                                    f' --K {K}' + \
-                                                    f' --v_gamma {v_gamma}' + \
-                                                    f' --lr {lr}' + \
-                                                    f' --hidden-size {hidden_size}' + \
-                                                    f' --total-steps {total_steps}' + \
-                                                    f' --buffer-size 1_000_000' + \
-                                                    f' --seed {seed}' + \
-                                                    f' --exp-prefix {name}' + \
-                                                    f' --eval-episodes {eval_episodes}' + \
-                                                    f' --eval-freq {eval_freq}' + \
-                                                    f' --policy-training-start 10_000' + \
-                                                    f' --val-training-start 10_000' + \
-                                                    f' --comp-samples {comp_samples}' + \
-                                                    f' --rep-gamma-shape {rep_gamma_shape}' + \
-                                                    f' --rep-loss-weight {rep_loss_weight}' + \
-                                                    f' --updates-per-step {updates_per_step}' + \
-                                                    f' --target-entropy-scale {target_entropy_scale}' + \
-                                                    f' --alpha-cql {alpha_cql}' + \
-                                                    f' --kernel-aux-weight {kernel_aux_weight}' + \
-                                                    f' --kernel-temp {kernel_temp}' + \
-                                                    f' --kernel-cand {kernel_cand}' + \
-                                                    f' --kernel-state-k {kernel_state_k}' + \
-                                                    f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
-                                                    f' --ot-eta {ot_eta}' + \
-                                                    f' --noise-type {noise_type}' + \
-                                                    ' --log_to_wandb' + \
-                                                    f' --expl-sigma {expl_sigma}' + \
-                                                    '" Enter'
+                            # +  '-' + name
+                            name = f'InStateOnly_lrAdjust_MaxGradNorm_QTarget_NoisyRep_{algo}'
 
-                                                os.system(command=command)
-                                                print(command)
-                                                time.sleep(3)
+                            command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+                                f' --env-id {env}' + \
+                                f' --algo {algo}' + \
+                                f' --device {device}' + \
+                                f' --batch-size {batch_size}' + \
+                                f' --K {K}' + \
+                                f' --v_gamma {v_gamma}' + \
+                                f' --lr {lr}' + \
+                                f' --hidden-size {hidden_size}' + \
+                                f' --total-steps {total_steps}' + \
+                                f' --buffer-size 1_000_000' + \
+                                f' --seed {seed}' + \
+                                f' --exp-prefix {name}' + \
+                                f' --eval-episodes {eval_episodes}' + \
+                                f' --eval-freq {eval_freq}' + \
+                                f' --policy-training-start 10_000' + \
+                                f' --val-training-start 10_000' + \
+                                f' --comp-samples {comp_samples}' + \
+                                f' --rep-gamma-shape {rep_gamma_shape}' + \
+                                f' --rep-loss-weight {rep_loss_weight}' + \
+                                f' --updates-per-step {updates_per_step}' + \
+                                f' --target-entropy-scale {target_entropy_scale}' + \
+                                f' --alpha-cql {alpha_cql}' + \
+                                f' --kernel-aux-weight {kernel_aux_weight}' + \
+                                f' --kernel-temp {kernel_temp}' + \
+                                f' --kernel-cand {kernel_cand}' + \
+                                f' --kernel-state-k {kernel_state_k}' + \
+                                f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
+                                f' --ot-eta {ot_eta}' + \
+                                f' --noise-type {noise_type}' + \
+                                ' --log_to_wandb' + \
+                                f' --expl-sigma {expl_sigma}' + \
+                                '" Enter'
+
+                            os.system(command=command)
+                            print(command)
+                            time.sleep(3)

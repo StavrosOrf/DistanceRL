@@ -32,6 +32,7 @@ def train_sb3_agent(algo,
     print(config)
 
     env = gym.make(env_id)
+    o, _ = env.reset(seed=seed)
 
     eval_env = gym.make(env_id)
 
@@ -142,7 +143,7 @@ def train_sb3_agent(algo,
         else:
             raise ValueError("Unknown algorithm")
 
-    model.learn(total_timesteps=config.get("total_steps", 1_000_000),
+    model.learn(total_timesteps=2_500_000,
                 progress_bar=True,
                 callback=[
                     WandbCallback(
