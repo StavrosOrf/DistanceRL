@@ -46,13 +46,14 @@ def data_fetcher():
         env_id = config['env_id']
         seed = config['seed']
 
-        if algo not in SB3_ALGOS:
-            continue
-
         print(
             f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")
 
-        data = extract_eval_rewards(run, algo, env_id, seed)
+        # data = extract_eval_rewards(run, algo, env_id, seed)
+        data = extract_eval_rewards_Faster(run, algo, env_id, seed)
+        
+        if data is None:
+            continue
 
         run_results = pd.concat([run_results, data], ignore_index=True)
 
@@ -68,6 +69,7 @@ def data_fetcher():
 
         results = {
             "algorithm": algo,
+            "env": env_id,
             "seed": seed,
             "runtime": round(np.array(history["_runtime"])[-1]/3600, 2),
             "best": best_reward
@@ -141,14 +143,70 @@ def extract_eval_rewards(run, algo, env, seed) -> pd.DataFrame:
 
     if counter == 0:
         print(f"    Warning: No evaluation data found for {run.name}")
-        return pd.DataFrame(columns=['step', 'eval_reward', 'seed'])
+        return None
 
     df = pd.DataFrame(data_points)
     df = df.sort_values('step')
 
-    # print(
-    #     f"  Extracted {len(df)} evaluation points from {run.name} (seed={seed})")
     return df
+
+
+def extract_eval_rewards_Faster(run, algo, env, seed) -> pd.DataFrame:
+    """
+    Faster version: Extract evaluation rewards by fetching entire history at once.
+    
+    Args:
+        run: W&B run object
+        algo: Algorithm name
+        env: Environment name
+        seed: Random seed
+        
+    Returns:
+        DataFrame with columns: step, eval_reward, algo, env, seed
+    """
+    if algo in SB3_ALGOS:
+        metric_name = 'eval/mean_reward'
+        step_name = 'global_step'
+    else:
+        metric_name = 'eval/avg_reward'
+        step_name = 'step'
+    
+    try:
+        # Fetch entire history at once - much faster than scan_history
+        history = run.history(keys=[metric_name, step_name], pandas=True)
+        
+        if history.empty:
+            print(f"    Warning: No history data found for {run.name}")
+            return None
+        
+        # Filter out rows where metric is NaN
+        history = history.dropna(subset=[metric_name])
+        
+        if history.empty:
+            print(f"    Warning: No evaluation data found for {run.name}")
+            return None
+        
+        # Rename columns to our standard format
+        df = pd.DataFrame({
+            'step': history[step_name],
+            'eval_reward': history[metric_name].round(4),
+            'algo': algo,
+            'env': env,
+            'seed': seed
+        })
+        
+        # Remove duplicate steps (keep first occurrence)
+        df = df.drop_duplicates(subset=['step'], keep='first')
+        
+        # Sort by step
+        df = df.sort_values('step').reset_index(drop=True)
+        
+        print(f"    Extracted {len(df)} evaluation points from {run.name}")
+        return df
+        
+    except Exception as e:
+        print(f"    Error extracting data from {run.name}: {e}")
+        return None
 
 
 if __name__ == "__main__":

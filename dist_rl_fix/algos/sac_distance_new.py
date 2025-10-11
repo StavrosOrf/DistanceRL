@@ -198,7 +198,12 @@ class SACDistanceAgentNew:
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
             alpha = self.alpha if self._alpha_fixed else self.log_alpha.exp()
+            # tensor alpha with floor (keeps gradients when not fixed)
+            # alpha_t = (torch.tensor(self._alpha, device=self.device) if self._alpha_fixed
+            #         else self.log_alpha.exp())
+            # alpha_t = torch.clamp(alpha_t, min=self.alpha_min)
 
+            # alpha = torch.clamp(alpha, min=0.02)
             target = r.unsqueeze(-1) + self.gamma * \
                 (1 - d.unsqueeze(-1)) * (qt - alpha * logp2)
         return target
@@ -211,6 +216,7 @@ class SACDistanceAgentNew:
         loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
+
 
     def _new_actor_alpha_loss(self, obs):
         obs_n = self.obs_rms.normalize(obs)
@@ -258,7 +264,15 @@ class SACDistanceAgentNew:
         # (B,1)
         Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
         # print(f'Qhat mean: {Qhat.mean().item()}')
+        
+        # in-state Qhat
+        # Qhat_in = self._qhat_in_state(obs, K=64, noise_std=0.1, softmax_temp=1.0, eps=0.05)
 
+        # mix: favor cross-state early, then in-state later
+        # mix = 0.5#1.0 if self.steps >= 50_000 else 0.5
+        # Qhat = mix * Qhat_in + (1.0 - mix) * Qhat     
+        Qhat = Qhat_in
+           
 
         alpha = self.log_alpha.exp()
 
@@ -305,6 +319,41 @@ class SACDistanceAgentNew:
         )
         return loss, info
 
+    # --- Fix 3: in-state kernel proposals (uses target nets for stability) ---
+    def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
+                       softmax_temp: float = 1.0, eps: float = 0.05):
+        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        B = obs_n.shape[0]
+        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
+
+        # propose K actions per current state
+        with torch.no_grad():
+            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
+            if noise_std > 0:
+                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+
+            z_k = F.normalize(self.rep_trunk_targ(
+                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
+            q1k, q2k = self.q_targ(obs_rep, a_k)
+            qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
+
+        # anchor at current policy action
+        a_anchor, _, _ = self.actor.sample(obs_n)               # (B,A)
+        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
+                          p=2, dim=1)         # (B,H)
+
+        # cosine sims to K proposals for the *same* state
+        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
+        S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
+
+        W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
+        if eps > 0.0:                                           # keep gradients alive
+            W = (1 - eps) * W + eps / K
+
+        Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
+        return Qhat
+    
+ 
     # ---------- training ----------
     def train(self):
         print(
