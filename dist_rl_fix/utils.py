@@ -162,7 +162,7 @@ def sinkhorn_transport_cost(C: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
 
     for _ in range(n_iters):
         u = log_a - torch.logsumexp(logK + v.unsqueeze(1), dim=2)        # (B,N)
-        v = log_b - torch.logsumexp(logK.transpose(1,2) + u.unsqueeze(2), dim=1)  # (B,K)
+    v = log_b - torch.logsumexp(logK.transpose(1,2) + u.unsqueeze(1), dim=2)  # (B,K)
 
     logP = u.unsqueeze(2) + logK + v.unsqueeze(1)   # (B,N,K)
     P = torch.exp(logP)                             # transport plan
