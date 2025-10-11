@@ -140,7 +140,7 @@ def main():
                 str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")
         else:
             exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%m%d_%H%M%S")
-            group_name = args.group_name + args.env_id# + "_testv1"
+            group_name = args.group_name + args.env_id + "_testv1"
 
     model_save_path = Path(args.model_save_path) / exp_prefix
     model_save_path.mkdir(parents=True, exist_ok=True)

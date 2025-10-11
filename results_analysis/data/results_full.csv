@@ -1,0 +1,13 @@
+step,eval_reward,algo,env,seed
+20000,-1.6378,ppo,HalfCheetah-v5,42
+40000,-26.2491,ppo,HalfCheetah-v5,42
+60000,803.1768,ppo,HalfCheetah-v5,42
+80000,798.8067,ppo,HalfCheetah-v5,42
+20000,152.2604,sac,Ant-v5,42
+40000,263.4771,sac,Ant-v5,42
+60000,354.8009,sac,Ant-v5,42
+80000,427.3888,sac,Ant-v5,42
+20000,881.1597,ppo,Ant-v5,42
+40000,551.0558,ppo,Ant-v5,42
+60000,179.1293,ppo,Ant-v5,42
+80000,149.7068,ppo,Ant-v5,42

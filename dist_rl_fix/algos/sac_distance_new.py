@@ -177,7 +177,6 @@ class SACDistanceAgentNew:
             lengths.append(L)
         avg = total / self.eval_episodes
         avg_len = sum(lengths) / len(lengths) if lengths else 0.0
-        print(f"[Eval] avg_return={avg:.2f}, avg_length={avg_len:.1f}")
 
         if self.best_eval < avg:
             self.best_eval = avg
@@ -185,7 +184,7 @@ class SACDistanceAgentNew:
                 f"[Eval] New best! avg_return={avg:.2f}, avg_length={avg_len:.1f}")
             self._save("best")
 
-        
+        print(f"[Eval] avg_return={avg:.2f}, avg_length={avg_len:.1f}")
         if wandb.run is not None:
             wandb.log({"eval/avg_reward": avg, "eval/avg_len": avg_len,
                       "step": self.steps}, step=self.steps)
@@ -199,12 +198,7 @@ class SACDistanceAgentNew:
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
             alpha = self.alpha if self._alpha_fixed else self.log_alpha.exp()
-            # tensor alpha with floor (keeps gradients when not fixed)
-            # alpha_t = (torch.tensor(self._alpha, device=self.device) if self._alpha_fixed
-            #         else self.log_alpha.exp())
-            # alpha_t = torch.clamp(alpha_t, min=self.alpha_min)
 
-            # alpha = torch.clamp(alpha, min=0.02)
             target = r.unsqueeze(-1) + self.gamma * \
                 (1 - d.unsqueeze(-1)) * (qt - alpha * logp2)
         return target
@@ -217,23 +211,6 @@ class SACDistanceAgentNew:
         loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
-
-    def _actor_alpha_loss(self, obs):
-        obs_n = self.obs_rms.normalize(obs)
-        a, logp, _ = self.actor.sample(obs_n)
-        q1, q2 = self.qnet(obs_n, a)
-        q = torch.min(q1, q2)
-
-        if self._alpha_fixed:
-            alpha = self.alpha
-            actor_loss = (alpha * logp - q).mean()
-            alpha_loss = None
-        else:
-            alpha = self.log_alpha.exp()
-            actor_loss = (alpha * logp - q).mean()
-            alpha_loss = -(self.log_alpha *
-                           (logp + self.target_entropy).detach()).mean()
-        return actor_loss, alpha_loss
 
     def _new_actor_alpha_loss(self, obs):
         obs_n = self.obs_rms.normalize(obs)
@@ -282,6 +259,7 @@ class SACDistanceAgentNew:
         Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
         # print(f'Qhat mean: {Qhat.mean().item()}')
 
+
         alpha = self.log_alpha.exp()
 
         entropy_loss = (alpha * logp).mean()
@@ -326,106 +304,6 @@ class SACDistanceAgentNew:
             beta_ema=self.beta_ema
         )
         return loss, info
-
-    # --- Fix 3: in-state kernel proposals (uses target nets for stability) ---
-    def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
-                       softmax_temp: float = 1.0, eps: float = 0.05):
-        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
-        B = obs_n.shape[0]
-        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
-
-        # propose K actions per current state
-        with torch.no_grad():
-            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
-            if noise_std > 0:
-                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
-
-            z_k = F.normalize(self.rep_trunk_targ(
-                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
-            q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
-
-        # anchor at current policy action
-        a_anchor, _, _ = self.actor.sample(obs_n)               # (B,A)
-        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
-                          p=2, dim=1)         # (B,H)
-
-        # cosine sims to K proposals for the *same* state
-        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
-        S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
-
-        W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
-        if eps > 0.0:                                           # keep gradients alive
-            W = (1 - eps) * W + eps / K
-
-        Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
-        return Qhat
-
-    def _kernel_aux_term(self, obs):
-        """Compute -E[Q_hat_kernel] with critics' Q as targets. Uses rep trunk; adaptive tau."""
-        if self.kernel_aux_weight <= 0.0:
-            return 0.0, {}
-
-        # obs_n = self.obs_rms.normalize(obs)
-        # a, _, _ = self.actor.sample(obs_n)
-
-        # sample candidates
-        # obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
-        #     self.kernel_cand)
-        
-        # obs_c_n = self.obs_rms.normalize(obs_c)
-        # act_c = self._env_to_action(act_env_c)
-
-        # # kernel similarities in rep space
-        # z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
-        #                   dim=1)                 # (B,H)
-
-        # with torch.no_grad():
-        #     z_c = F.normalize(
-        #         self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
-
-        # S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
-
-        # # Compute per-sample k based on cosine similarity threshold
-        # cos_sim_threshold = 0.8
-        # num_above_threshold = (S_full > cos_sim_threshold).sum(dim=1)  # [B]
-        # k_per_sample = torch.clamp(
-        #     num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
-
-        # S_masked, top_vals, top_idx = differentiable_topk(S_full, k_per_sample)
-
-        # # adaptive tau per row
-        # if self.kernel_adaptive_tau:
-        #     W = torch.softmax(S_masked, dim=1)
-        #     assert torch.isfinite(
-        #         W).all(), "Non-finite weights in kernel auxiliary!"
-        # else:
-        #     W = torch.softmax(S_masked / max(1e-6, self.kernel_temp), dim=1)
-        #     raise NotImplementedError("Non-adaptive tau not implemented!")
-
-        # # targets: critics' Q rather than returns (much better bias)
-        # # qc1, qc2 = self.qnet(obs_c_n, act_c)
-        # # qc = torch.min(qc1, qc2).unsqueeze(0)
-        # with torch.no_grad():
-        #     qc1, qc2 = self.q_targ(obs_c_n, act_c)        # <= target critics
-        #     qc = torch.min(qc1, qc2).unsqueeze(0)
-
-        # # (B,1)
-        # Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
-
-        # in-state Qhat
-        Qhat_in = self._qhat_in_state(obs, K=64, noise_std=0.1, softmax_temp=1.0, eps=0.05)
-
-        # mix: favor cross-state early, then in-state later
-        # mix = 1.0 if self.steps >= 50_000 else 0.5
-        # Qhat = mix * Qhat_in + (1.0 - mix) * Qhat
-        Qhat = Qhat_in
-        
-        aux = -Qhat.mean()  # we add to actor loss with kernel_aux_weight
-        logs = {
-            # "kernel/top_state_sim_mean": float(top_vals.mean().item()),
-                "kernel/aux_term": float(aux.item())}
-        return aux, logs
 
     # ---------- training ----------
     def train(self):

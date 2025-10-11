@@ -1,0 +1,4 @@
+algorithm,seed,runtime,best
+ppo,42,1.22,803.1768
+sac,42,6.58,427.3888
+ppo,42,1.31,881.1597

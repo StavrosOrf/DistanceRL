@@ -39,7 +39,7 @@ def train_sb3_agent(algo,
     eval_callback = EvalCallback(eval_env,
                                  # best_model_save_path=save_dir,
                                  # log_path=eval_log_dir,
-                                 eval_freq=config.get("eval_interval", 10000),
+                                 eval_freq=10000,
                                  n_eval_episodes=config.get(
                                      "eval_episodes", 5),
                                  deterministic=True,
