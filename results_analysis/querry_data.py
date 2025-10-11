@@ -83,6 +83,10 @@ def data_fetcher():
     print(df.shape)
 
     print(df.describe())
+    
+    #make directory if not exists
+    if not os.path.exists("./results_analysis/data"):
+        os.makedirs("./results_analysis/data")
 
     df.to_csv("./results_analysis/data/results_summary.csv",
               index=False)
