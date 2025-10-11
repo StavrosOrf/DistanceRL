@@ -14,7 +14,7 @@ import random
 partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
 algo = ['SACDistanceAgentNew']
 group_name = "Ablation_"
-project_name = "DistRL_Rep"
+project_name = "DistRL" # DistRL_Rep
 
 # resource configuration
 device = 'cuda' if partition != 'compute' else 'cpu'
@@ -57,28 +57,37 @@ CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1'] #number of envs: 2
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 # ---------------- Ablation grids ----------------
-batch_size_grid = [512]
-K_grid = [256]
+batch_size_grid = [256]
+K_grid = [64]
 lr_grid = [1e-3]  # [1e-3]
-seed_grid = [42]
+expl_sigma_grid = [0.1]
+seed_grid = [32, 22]
 target_entropy_scale_grid = [1]
-kernel_aux_weight_grid = [0.1]
+kernel_aux_weight = 0.1
 
 # if directory does not exist, create it
 if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
 for env in continuous_envs:
-    for algo in SB3_ALGOS:  # SB3_ALGOS:
+# for env in ['HalfCheetah-v5']:
+    # for algo in ['tqc']:  # SB3_ALGOS:
+    for algo in SB3_ALGOS:
         for batch_size in batch_size_grid:
             for K in K_grid:            
                 for lr in lr_grid:
                     for seed in seed_grid:
                         for target_entropy_scale in target_entropy_scale_grid:
-                            for kernel_aux_weight in kernel_aux_weight_grid:
+                            for expl_sigma in expl_sigma_grid:
                                 
                                 if algo in SB3_ALGOS:
-                                    job_hours = 7
+                                    job_hours = 5
+                                    if env in ['Humanoid-v5']:
+                                        job_hours = 12
+                                    
+                                if env in ['Humanoid-v5']:
+                                    buffer_size_default = 500_000
+                                    cpu_cores = 2 if partition == 'compute' else 4
 
                                 env_tag = env.replace('-', '')
                                 run_id = (f"{env_tag}"

@@ -27,6 +27,8 @@ class SACDistanceAgentNew:
                  gamma: float,
                  tau: float,
                  lr: float,
+                 K: int,
+                 expl_sigma: float,
                  updates_per_step: int,
                  kernel_aux_weight: float,
                  kernel_temp: float,
@@ -51,6 +53,9 @@ class SACDistanceAgentNew:
         self.kernel_cand = kernel_cand
         self.kernel_state_k = kernel_state_k
         self.kernel_adaptive_tau = kernel_adaptive_tau
+        
+        self.K = K  # for in-state Qhat
+        self.noise_std = expl_sigma
 
         self.device = device
         self.env = gym.make(env_id)
@@ -270,18 +275,18 @@ class SACDistanceAgentNew:
 
         # in-state Qhat
         else:
-            Qhat, logp = self._qhat_in_state(obs,
-                                             K=32,
-                                             noise_std=0.1,
-                                             softmax_temp=1.0,
-                                             eps=0.05)
-            
-            #Normalized in-state Qhat
-            # Qhat, logp = self._qhat_in_state_norm(obs,
+            # Qhat, logp = self._qhat_in_state(obs,
             #                                  K=32,
             #                                  noise_std=0.1,
             #                                  softmax_temp=1.0,
             #                                  eps=0.05)
+            
+            #Normalized in-state Qhat
+            Qhat, logp = self._qhat_in_state_norm(obs,
+                                             K=self.K,
+                                             noise_std=self.noise_std,
+                                             softmax_temp=1.0,
+                                             eps=0.05)
 
         alpha = self.log_alpha.exp()
 

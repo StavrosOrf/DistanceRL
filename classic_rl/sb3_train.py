@@ -143,7 +143,7 @@ def train_sb3_agent(algo,
         else:
             raise ValueError("Unknown algorithm")
 
-    model.learn(total_timesteps=2_500_000,
+    model.learn(total_timesteps=2_000_000,
                 progress_bar=True,
                 callback=[
                     WandbCallback(
