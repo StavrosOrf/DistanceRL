@@ -133,3 +133,38 @@ def approx_spearman_r(x: torch.Tensor, y: torch.Tensor) -> float:
     ry = (ry - ry.mean(dim=-1, keepdim=True)) / (ry.std(dim=-1, keepdim=True) + 1e-6)
     r = (rx * ry).mean().item()
     return float(r)
+
+
+def pairwise_cosine_cost(Zp: torch.Tensor, Zc: torch.Tensor) -> torch.Tensor:
+    """
+    Zp: (B, N, D) policy embeddings; Zc: (B, K, D) candidate embeddings (both L2-normalized)
+    Returns cost matrix C = 1 - cosine(zp, zc) of shape (B, N, K).
+    """
+    # (B,N,D) @ (B,D,K) -> (B,N,K)
+    cos = torch.einsum('bnd,bkd->bnk', Zp, Zc)
+    return 1.0 - cos.clamp(-1.0, 1.0)
+
+def sinkhorn_transport_cost(C: torch.Tensor, a: torch.Tensor, b: torch.Tensor,
+                            epsilon: float = 0.05, n_iters: int = 10) -> torch.Tensor:
+    """
+    Batched log-domain Sinkhorn. 
+    C: (B,N,K) cost, a: (B,N) source weights, b: (B,K) target weights.
+    Returns: OT cost per batch element, shape (B,)
+    """
+    B, N, K = C.shape
+    log_a = torch.log(a + 1e-8)
+    log_b = torch.log(b + 1e-8)
+    logK = -C / epsilon  # (B,N,K)
+
+    # dual potentials in log-domain
+    u = torch.zeros_like(log_a)
+    v = torch.zeros_like(log_b)
+
+    for _ in range(n_iters):
+        u = log_a - torch.logsumexp(logK + v.unsqueeze(1), dim=2)        # (B,N)
+        v = log_b - torch.logsumexp(logK.transpose(1,2) + u.unsqueeze(2), dim=1)  # (B,K)
+
+    logP = u.unsqueeze(2) + logK + v.unsqueeze(1)   # (B,N,K)
+    P = torch.exp(logP)                             # transport plan
+    cost = (P * C).sum(dim=(1,2))                   # (B,)
+    return cost
