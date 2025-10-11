@@ -571,8 +571,8 @@ class SACDistanceAgentNew:
             "actor": self.actor.state_dict(),
             "qnet": self.qnet.state_dict(),
             "rep_trunk": self.rep_trunk.state_dict(),
+            "normalization": self.obs_rms.state_dict(),
             "steps": self.steps
         }, path)
-        if wandb.run is not None:
-            wandb.save(path)
+        
         print(f"[Save] Model saved to {path}")

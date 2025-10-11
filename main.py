@@ -133,7 +133,7 @@ def main():
             "_offline_" + datetime.now().strftime("%m%d_%H%M%S")
     else:
         if args.algo in SB3_ALGOS:
-            group_name = args.group_name + args.env_id#+ "_SB3"
+            group_name = args.group_name + args.env_id #+ "_SB3"
             # args.device = "cpu"  # SB3 algorithms run on CPU by default
             args.log_to_wandb = True  # always log sb3 runs to wandb
             exp_prefix = args.algo + "_SB3_seed=" + \

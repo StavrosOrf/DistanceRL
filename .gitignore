@@ -212,6 +212,4 @@ slurm_logs/
 logs/
 saved_models/
 results_analysis/data/
-results_analysis/data/results_full.csv
-results_analysis/data/results_summary.csv
-results_analysis/data/results_full.csv
+results_analysis/videos/

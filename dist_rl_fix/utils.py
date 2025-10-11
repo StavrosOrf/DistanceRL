@@ -5,6 +5,7 @@ class RunningMeanStd:
         self.mean = torch.zeros(shape, dtype=torch.float32, device=device)
         self.var = torch.ones(shape, dtype=torch.float32, device=device)
         self.count = eps
+        self.device = device
 
     @torch.no_grad()
     def update(self, x: torch.Tensor):
@@ -24,6 +25,19 @@ class RunningMeanStd:
 
     def normalize(self, x: torch.Tensor):
         return (x - self.mean) / (self.var.sqrt() + 1e-8)
+
+    def state_dict(self):
+        return {
+            'mean': self.mean.detach().cpu(),
+            'var': self.var.detach().cpu(),
+            'count': float(self.count),
+        }
+
+    def load_state_dict(self, state):
+        device = self.mean.device
+        self.mean = state['mean'].to(device)
+        self.var = state['var'].to(device)
+        self.count = state['count']
 
 def polyak_update(target, source, tau):
     for tp, sp in zip(target.parameters(), source.parameters()):
