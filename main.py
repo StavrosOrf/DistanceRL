@@ -14,10 +14,10 @@ from dist_rl.utils import load_hyperparameters
 # from dist_rl.offlineRL_utils import load_minari_dataset_into_buffer
 
 from dist_rl_fix.algos.sac_distance import SACDistanceAgent
-from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
+# from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
 from dist_rl_fix.algos.sac_distance_new import SACDistanceAgentNew
 from dist_rl_fix.algos.sac_distance_diffusion import SACDistanceDiffusionAgent
-from dist_rl_fix.algos.sac_wasserstein import SACWassersteinAgent
+# from dist_rl_fix.algos.sac_wasserstein import SACWassersteinAgent
 from dist_rl_fix.utils import set_seed
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
@@ -205,14 +205,14 @@ def main():
         setattr(args, 'save_dir', args.model_save_path)
 
         agent = SACDistanceAgent(**args.__dict__)
-        if args.algo == 'sacDistRL':
-            agent.train_sac()
-        else:
-            print(f'Running {args.algo} with kernel policy updates.')
-            # Kernel policy update loop
-            KernelPolicyMixin.attach(agent, temp=args.kernel_temp, cand=args.kernel_cand,
-                                     state_k=args.kernel_state_k, use_adv=args.kernel_adv)
-            agent.train_kernel()
+        # if args.algo == 'sacDistRL':
+        #     agent.train_sac()
+        # else:
+        #     print(f'Running {args.algo} with kernel policy updates.')
+        #     # Kernel policy update loop
+        #     KernelPolicyMixin.attach(agent, temp=args.kernel_temp, cand=args.kernel_cand,
+        #                              state_k=args.kernel_state_k, use_adv=args.kernel_adv)
+        #     agent.train_kernel()
 
     elif args.algo == "DistAgent":
         set_seed(args.seed)
@@ -236,16 +236,16 @@ def main():
 
         print(f'Running {args.algo} with kernel policy updates.')
     
-    elif "sacWasserstein" in args.algo:
-        set_seed(args.seed)
+    # elif "sacWasserstein" in args.algo:
+    #     set_seed(args.seed)
 
-        setattr(args, 'n_step', args.K)  # for representation loss
-        setattr(args, 'hidden', args.hidden_size)  # for representation loss
-        setattr(args, 'save_dir', args.model_save_path)
+    #     setattr(args, 'n_step', args.K)  # for representation loss
+    #     setattr(args, 'hidden', args.hidden_size)  # for representation loss
+    #     setattr(args, 'save_dir', args.model_save_path)
         
-        agent = SACWassersteinAgent(**args.__dict__)
+    #     agent = SACWassersteinAgent(**args.__dict__)
 
-        print(f'Running {args.algo} with kernel policy updates.')
+    #     print(f'Running {args.algo} with kernel policy updates.')
     
     else:
         agent = train_sb3_agent(**args.__dict__)

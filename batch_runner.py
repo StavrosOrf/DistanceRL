@@ -1,7 +1,7 @@
 '''
 This script is used to run the batch of training sciprts for every algorithms evaluated
 #old command# srun --mpi=pmix --job-name=interactive-gpu --partition=gpu --gres=gpu:1 --qos=normal --time=01:00:00 --mem-per-cpu=4096 --pty /bin/bash -il
-srun --mpi=pmix --job-name=interactive-gpu --partition=gpu --gpus-per-task=1 --qos=normal --time=01:00:00 --mem-per-cpu=5300 --cpus-per-task=1 --ntasks=1 --pty /bin/bash -il
+srun --mpi=pmix --job-name=interactive-gpu --partition=gpu --gpus-per-task=1 --qos=normal --time=01:00:00 --mem-per-cpu=5300 --cpus-per-task=1 --ntasks=1 --pty --account research-eemcs-ese /bin/bash -il
 srun --mpi=pmix --job-name=interactive-gpu --partition=gpu-a100-small --gpus-per-task=1 --qos=normal --time=01:00:00 --mem-per-cpu=7000 --cpus-per-task=1 --ntasks=1 --pty /bin/bash -il
 srun --mpi=pmix --job-name=interactive-gpu --partition=gpu-a100 --gpus-per-task=1 --qos=normal --time=01:00:00 --mem-per-cpu=5500 --cpus-per-task=1 --ntasks=1 --pty /bin/bash -il
 srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --qos=normal --time=01:00:00 --mem-per-cpu=3800 --ntasks=1 --pty /bin/bash -il
@@ -18,7 +18,7 @@ project_name = "DistRL" # DistRL_Rep
 
 # resource configuration
 device = 'cuda' if partition != 'compute' else 'cpu'
-job_hours = 4 if partition == 'gpu-a100-small' else 15
+job_hours = 6 if partition == 'gpu-a100-small' else 15
 
 cpu_cores = 1 if partition != 'compute' else 2
 memory_per_cpu = '5300' if partition != 'compute' else '3800'
@@ -65,7 +65,7 @@ K_grid = [64, 128, 256, 512]
 lr_grid = [1e-3]  # [1e-3]
 expl_sigma_grid = [0.2, 0.5]
 seed_grid = [42]
-target_entropy_scale_grid = [0.8, 1]
+target_entropy_scale_grid = [0.8, 1, 2]
 
 
 # if directory does not exist, create it
@@ -74,7 +74,7 @@ if not os.path.exists('./slurm_logs'):
 
 for env in HARD_MUJOCO_ENVS:
     # for algo in ['tqc']:  # SB3_ALGOS:
-    for algo in algo:
+    for algo in ['DistAgent']:
         for batch_size in batch_size_grid:
             for K in K_grid:            
                 for lr in lr_grid:
@@ -85,15 +85,14 @@ for env in HARD_MUJOCO_ENVS:
                                 if algo in SB3_ALGOS:
                                     job_hours = 5
                                     if env in ['Humanoid-v5']:
-                                        job_hours = 12
+                                        job_hours = 7
                                     
                                 if env in ['Humanoid-v5']:
                                     buffer_size_default = 800_000
-                                    cpu_cores = 2 if partition == 'compute' else 4
+                                    cpu_cores = 1 if partition == 'compute' else 2
 
                                 env_tag = env.replace('-', '')
-                                run_id = (f"{env_tag}"
-                                          )
+                                run_id = (f"{algo}_K{K}_bs{batch_size}_lr{lr}_tes{target_entropy_scale}_es{expl_sigma}")
                                 run_name = f"{run_id}_{random.randint(0, 99999)}"
                                 print(f"Submitting {run_name}")
 
