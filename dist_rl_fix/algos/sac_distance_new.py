@@ -425,87 +425,147 @@ class SACDistanceAgentNew:
         return Qhat, logp
     
     def _actor_loss_kl_instate(self,
-                            obs,
-                            K: int = 64,
-                            noise_std: float = 0.1,
-                            tau_w: float = 1.0,          # temperature for weights
-                            use_mpo_prior: bool = False, # if True, include π_old prior in weights
-                            w_clip: float = 100.0,       # guard against weight explosion
-                            eps_smooth: float = 1e-8,
-                            entropy_bonus: bool = True):
+                           obs,
+                           K: int = 64,
+                           noise_std: float = 0.10,
+                           effK_lo: float = 12.0,
+                           effK_hi: float = 24.0,
+                           tau_min: float = 0.10,
+                           tau_max: float = 8.00, #5.00
+                           iters_bisect: int = 8,
+                           use_mpo_prior: bool = False,
+                           entropy_bonus: bool = True):
         """
-        In-state advantage-weighted KL projection:
-        L_actor = - E_s [ Σ_k ẇ_k log πθ(a_k|s) ] + α E_s[log πθ(a_anchor|s)]
-        where ẇ_k ∝ exp((q_k - b_s)/tau_w) (optionally times π_old(a_k|s)).
-        No gradients through q_k or b_s. Uses only in-state proposals.
+        KL-projection actor loss (in-state only).
+        Builds a nonparametric target over proposals a_k at the SAME state, with
+        w_k ∝ exp( (q_k - b_s) / τ_w )
+        and minimizes forward-KL:  -Σ_k w_k log πθ(a_k|s).
+        Q only shapes the weights (detached). No gradients through Q.
+
+        Returns:
+        actor_loss, alpha_loss
         """
         device = self.device
-        obs_n = self.obs_rms.normalize(obs)               # (B,D)
-        B = obs_n.size(0)
 
-        # ---- Proposals from current state (stop-grad) ----
-        obs_rep = obs_n.repeat_interleave(K, dim=0)       # (B*K,D)
+        # ---------- helpers (local, self-contained) ----------
+        def effK_from_adv(adv: torch.Tensor, tau: torch.Tensor, eps: float = 1e-8):
+            # adv: (B,K), tau: scalar tensor or (B,1)
+            P = torch.softmax(adv / (tau + eps), dim=1)            # (B,K)
+            effK = 1.0 / (P.pow(2).sum(dim=1) + eps)               # (B,)
+            return P, effK
+
+        def choose_tau_for_effK(adv: torch.Tensor,
+                                lo_target: float,
+                                hi_target: float,
+                                tmin: float,
+                                tmax: float,
+                                iters: int):
+            # bisection on a scalar τ_w to land mean effK in [lo, hi]
+            lo = torch.tensor([[tmin]], device=adv.device)
+            hi = torch.tensor([[tmax]], device=adv.device)
+            for _ in range(iters):
+                mid = 0.5 * (lo + hi)
+                _, effK = effK_from_adv(adv, mid)
+                m = effK.mean()
+                # If effK too low -> weights too peaky -> increase τ (move lo up)
+                lo = torch.where(m < lo_target, mid, lo)
+                # If effK too high -> weights too flat -> decrease τ (move hi down)
+                hi = torch.where(m > hi_target, mid, hi)
+            tau = 0.5 * (lo + hi)                                  # (1,1)
+            P, effK = effK_from_adv(adv, tau)
+            return tau.squeeze(), P, effK
+
+        def robust_adv(qk: torch.Tensor, W_sim: torch.Tensor):
+            """
+            qk:    (B,K) target critic scores (detached outside)
+            W_sim: (B,K) any similarity weights for the baseline (e.g., cosine-softmax)
+            Returns:
+            adv:   (B,K) centered, whitened, clipped advantages (detached)
+            q_bar: (B,1) robust baseline used for logging
+            """
+            q_mean = (W_sim * qk).sum(dim=1, keepdim=True)         # (B,1)
+            q_med  = qk.median(dim=1, keepdim=True).values         # (B,1)
+            q_bar  = 0.5 * (q_mean + q_med)                        # robust baseline
+            adv = (qk - q_bar).detach()                            # stop-grad
+            adv = adv / (adv.std(dim=1, keepdim=True) + 1e-6)      # whiten
+            adv = adv.clamp(-3.0, 3.0)                             # clip
+            return adv, q_bar
+
+        # ---------- prepare batch & proposals ----------
+        obs_n = self.obs_rms.normalize(obs)                        # (B,D)
+        B = obs_n.size(0)
+        obs_rep = obs_n.repeat_interleave(K, dim=0)                # (B*K,D)
+
         with torch.no_grad():
-            a_k, logp_k_old, _ = self.actor.sample(obs_rep)   # (B*K,A)
+            # Proposals from current policy (in-state), add small noise
+            a_k, _, _ = self.actor.sample(obs_rep)                 # (B*K,A)
             if noise_std > 0:
                 a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
 
-            # target Q (stop-grad)
-            q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(B, K)               # (B,K)
+            # Target critic scores
+            q1k, q2k = self.q_targ(obs_rep, a_k)                   # (B*K,1)
+            # Conservative blend (more robust than strict min early on)
+            q_mean = 0.5 * (q1k + q2k)
+            q_std  = 0.5 * (q1k - q2k).abs()
+            qk     = (q_mean - 0.5 * q_std).view(B, K)             # (B,K)
 
-        # ---- Baseline per state (advantage-centering) ----
-        # Option 1: softmax over cosine vs target trunk (like your kernel)
-        with torch.no_grad():
-            # anchor action for similarity (train branch, but no grad here)
-            a_anchor, _, _ = self.actor.sample(obs_n)         # (B,A)
-            z_i = F.normalize(self.rep_trunk(obs_n, a_anchor), p=2, dim=1)                # (B,H)
-            z_k = F.normalize(self.rep_trunk_targ(obs_rep, a_k), p=2, dim=1).view(B,K,-1) # (B,K,H)
-            S = torch.einsum('bd,bkd->bk', z_i, z_k)          # (B,K)
-            # optional similarity mixing into the baseline weights
-            W_sim = torch.softmax(S / max(0.5, tau_w), dim=1) # (B,K)
+            # Light similarity weights for the baseline (cosine in rep space)
+            a_anchor0, _, _ = self.actor.sample(obs_n)             # (B,A)
+            z_i  = F.normalize(self.rep_trunk(obs_n, a_anchor0), p=2, dim=1)          # (B,H)
+            z_k  = F.normalize(self.rep_trunk_targ(obs_rep, a_k), p=2, dim=1)         # (B*K,H)
+            z_kv = z_k.view(B, K, -1)                                                  # (B,K,H)
+            S    = torch.einsum('bd,bkd->bk', z_i, z_kv).clamp(-1.0, 1.0)             # (B,K)
+            W_sim = torch.softmax(S / 1.0, dim=1)                                      # (B,K)
 
-            q_bar = (W_sim * qk).sum(dim=1, keepdim=True)     # (B,1)
+        # ---------- robust, centered advantages ----------
+        adv, q_bar = robust_adv(qk, W_sim)                                             # (B,K), (B,1)
 
-        # ---- Advantage weights (detached) ----
-        adv = (qk - q_bar).detach()                           # (B,K)
-        w = torch.exp((adv / max(1e-6, tau_w)).clamp(max=math.log(w_clip)))  # (B,K)
+        # ---------- choose τ_w to control effective K ----------
+        tau_w, _, effK = choose_tau_for_effK(adv, effK_lo, effK_hi, tau_min, tau_max, iters_bisect)
 
+        # Build final weights (forward-KL target). Optional MPO prior for trust region.
+        w = torch.softmax(adv / (tau_w + 1e-6), dim=1)                                  # (B,K)
         if use_mpo_prior:
-            # multiply by prior π_old(a_k|s) for trust region (detached)
-            w = w * torch.exp(logp_k_old.view(B, K).detach())
+            with torch.no_grad():
+                # if you maintain self.actor_old externally, use it here; fallback to current actor if absent
+                actor_for_prior = getattr(self, "actor_old", self.actor)
+                logp_old = actor_for_prior.log_prob(obs_rep, a_k).view(B, K)
+            w = w * torch.exp(logp_old)
+        w = w / (w.sum(dim=1, keepdim=True) + 1e-8)
+        w = (1.0 - 1e-3) * w + (1e-3 / K)                                               # ε-smoothing
 
-        # normalize per-state
-        w = w / (w.sum(dim=1, keepdim=True) + eps_smooth)     # (B,K)
-        w = w.detach()
+        # ---------- weighted MLE (forward-KL projection) ----------
+        logp_new = self.actor.log_prob(obs_rep, a_k).view(B, K)                         # (B,K)
+        mle_term = -(w * logp_new).sum(dim=1).mean()
 
-        # ---- Weighted log-likelihood (forward-KL projection) ----
-        # Evaluate current log-prob on proposals (with gradient)
-        logp_new = self.actor.log_prob(obs_rep, a_k).view(B, K)   # implement .log_prob for your actor
-        mle_term = -(w * logp_new).sum(dim=1).mean()              # (scalar)
-
-        # Optional entropy bonus on anchor action (keep your α temperature)
-        a_anchor, logp_anchor, _ = self.actor.sample(obs_n)
-        entropy_term = (self.log_alpha.exp() * logp_anchor).mean() if entropy_bonus else 0.0
+        # ---------- entropy bonus (standard SAC temperature tuning) ----------
+        alpha_loss = None
+        entropy_term = 0.0
+        if entropy_bonus:
+            a_anchor, logp_anchor, _ = self.actor.sample(obs_n)                         # (B,A)
+            alpha = self.log_alpha.exp()
+            # Optional floor to avoid premature collapse:
+            # alpha = torch.clamp(alpha, min=0.03)
+            entropy_term = (alpha * logp_anchor).mean()
+            alpha_loss = -(self.log_alpha * (logp_anchor + self.target_entropy).detach()).mean()
 
         actor_loss = mle_term + entropy_term
 
-        # Standard alpha update if using entropy bonus
-        alpha_loss = None
-        if entropy_bonus:
-            alpha_loss = -(self.log_alpha * (logp_anchor + self.target_entropy).detach()).mean()
-
-        # logs
+        # ---------- logs ----------
         if wandb.run is not None:
-            wandb.log({
+            w_effK = (1.0 / (w.pow(2).sum(dim=1) + 1e-8)).mean().item()
+            logs = {
                 "kl_instate/mle_term": float(mle_term.item()),
                 "kl_instate/entropy_term": float(entropy_term if isinstance(entropy_term, float) else entropy_term.item()),
-                "kl_instate/tau_w": float(tau_w),
-                "kl_instate/w_effK": float((1.0 / (w.pow(2).sum(dim=1) + 1e-8)).mean().item()),
+                "kl_instate/tau_w": float(tau_w.item() if torch.is_tensor(tau_w) else tau_w),
+                "kl_instate/w_effK": float(w_effK),
                 "kl_instate/adv_abs_mean": float(adv.abs().mean().item()),
-            }, step=self.steps)
+                "kl_instate/qbar_mean": float(q_bar.mean().item()),
+            }
+            wandb.log(logs, step=self.steps)
 
         return actor_loss, alpha_loss
+
 
 
     def _kernel_tau_instate(self, S_rowwise: torch.Tensor, base_temp: float) -> torch.Tensor:
@@ -621,10 +681,7 @@ class SACDistanceAgentNew:
                     obs,
                     K=self.K,
                     noise_std=self.noise_std,
-                    tau_w=1.0,
                     use_mpo_prior=False,
-                    w_clip=100.0,
-                    eps_smooth=1e-8,
                     entropy_bonus=True
                 )
 
