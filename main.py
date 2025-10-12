@@ -17,17 +17,24 @@ from dist_rl_fix.algos.sac_distance import SACDistanceAgent
 # from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
 from dist_rl_fix.algos.sac_distance_new import SACDistanceAgentNew
 from dist_rl_fix.algos.sac_distance_diffusion import SACDistanceDiffusionAgent
+from dist_rl_fix.algos.sac_distance_atari import SACDistanceAtari
 # from dist_rl_fix.algos.sac_wasserstein import SACWassersteinAgent
 from dist_rl_fix.utils import set_seed
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
-
+MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
+               'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5'] #number of envs: 9
+BOX2D_ENVS = ['LunarLanderContinuous-v3',
+              'MountainCarContinuous-v0', 'Pendulum-v1'] #number of envs: 3
+CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
+continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--env-id", type=str,
-                        default="HalfCheetah-v5", help="Gym environment ID")
+                        default="ALE/Breakout-v5", help="Gym environment ID")
+                        # default="HalfCheetah-v5", help="Gym environment ID")
     parser.add_argument("--dataset", type=str, default="mujoco/halfcheetah/expert-v0",
                         help="Minari dataset name (e.g., mujoco/halfcheetah/expert-v0)")
     parser.add_argument("--max-dataset-episodes", type=int, default=None,
@@ -95,7 +102,15 @@ def main():
     parser.add_argument('--kernel-state-k', type=int, default=64)
     parser.add_argument('--kernel-adv', action='store_true',
                         help='Use advantage (recommended).')
-    
+
+    parser.add_argument("--aug", action="store_true")
+    parser.add_argument("--no-aug", action="store_false", dest="aug")
+    parser.add_argument("--warmup_steps", type=int, default=50_000)
+    parser.add_argument("--use_impala", action="store_true", default=True,
+                        help="If true, uses Impala CNN for image-based observations.")
+    parser.add_argument("--no-impala", action="store_false", dest="use_impala")
+    parser.set_defaults(use_impala=True)
+
     parser.add_argument('--updates-per-step', type=int, default=1,
                         help='Number of optimization rounds per environment step.')
     parser.add_argument('--target-entropy-scale', type=float, default=0.9,
@@ -214,7 +229,7 @@ def main():
         #                              state_k=args.kernel_state_k, use_adv=args.kernel_adv)
         #     agent.train_kernel()
 
-    elif args.algo == "DistAgent":
+    elif args.algo == "DistAgent" and args.env_id in continuous_envs:
         set_seed(args.seed)
 
         setattr(args, 'rep_gamma_shape', args.v_gamma)  # for representation loss        
@@ -224,7 +239,21 @@ def main():
         agent = SACDistanceAgentNew(**args.__dict__)
 
         print(f'Running {args.algo} with kernel policy updates.')
-        
+    
+    elif args.algo == "DistAgent" and args.env_id not in continuous_envs:
+        set_seed(args.seed)
+
+        setattr(args, 'rep_gamma_shape', args.v_gamma)  # for representation loss
+        setattr(args, 'alpha', args.alpha)  # for representation loss
+        setattr(args, 'save_dir', args.model_save_path)
+
+        # set eval_freq to 50000
+        setattr(args, 'eval_freq', 50000)
+        setattr(args, 'warmup_steps', 50000)
+
+        agent = SACDistanceAtari(**args.__dict__)
+        print(f'Running {args.algo} with kernel policy updates.')
+
     elif args.algo == "SACDistanceDiffusionAgent":
         set_seed(args.seed)
 
