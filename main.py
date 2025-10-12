@@ -48,8 +48,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="SACDistanceDiffusionAgent")
-    # parser.add_argument("--algo", type=str, default="DistRL")
+    parser.add_argument("--algo", type=str, default="DistAgent")    
     parser.add_argument("--model-save-path", type=str,
                         default="./saved_models/")
     parser.add_argument("--noise-type", type=str, default="Scheduled")
@@ -215,7 +214,7 @@ def main():
                                      state_k=args.kernel_state_k, use_adv=args.kernel_adv)
             agent.train_kernel()
 
-    elif args.algo == "SACDistanceAgentNew":
+    elif args.algo == "DistAgent":
         set_seed(args.seed)
 
         setattr(args, 'rep_gamma_shape', args.v_gamma)  # for representation loss        
