@@ -56,7 +56,7 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
                             # +  '-' + name
-                            name = f'TauMax8_NewKLActorLoss_{algo}'
+                            name = f'FastActorLoss_{algo}'
 
                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                 f' --env-id {env}' + \
