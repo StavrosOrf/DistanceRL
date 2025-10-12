@@ -23,8 +23,8 @@ target_entropy_scale = 1
 comp_samples = 4096
 noise_type = "OU"  # "OU", "SchedOU", "Normal"
 
-expl_sigma = 0.1  # 0.1, 0.2,
-K = 64
+expl_sigma = 0.3  # 0.1, 0.2,
+K = 128
 
 alpha_cql = 0.0
 
@@ -56,7 +56,7 @@ for algo in ['SACDistanceDiffusionAgent']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
                             # +  '-' + name
-                            name = f'{algo}-K{K}'
+                            name = f'PullWeight1.5-{algo}-K{K}'
 
                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                 f' --env-id {env}' + \

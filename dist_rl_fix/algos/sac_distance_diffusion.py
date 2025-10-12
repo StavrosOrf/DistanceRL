@@ -162,7 +162,7 @@ class SACDistanceDiffusionAgent:
             list(self.state_cond.parameters()),
             lr=3e-4
         )
-        self.denoiser_sigma = 0.20   # latent noise std (fixed, robust)
+        self.denoiser_sigma = expl_sigma  # latent noise std (fixed, robust)
         self.denoiser_tau_q = 1.0    # temperature for Q-weights to train g_psi
         # denoiser updates per learner step (cheap)
         self.denoiser_steps = 1
@@ -197,20 +197,6 @@ class SACDistanceDiffusionAgent:
         self.rep_huber = rep_huber
         self.beta_ema = BetaEMA(decay=0.995)
 
-        # --- Action bank (global proposal reservoir) ---
-        self.bank_max = 50_000
-        self.bank_ptr = 0
-        self.bank_filled = 0
-        self.action_bank = torch.zeros(
-            self.bank_max, self.act_dim, device=self.device)
-
-        # fixed knobs that rarely need touching
-        self._bank_jitter = 0.10   # small jitter added when sampling from the bank
-        # fraction of proposals that are global (bank)
-        self._rho_global = 0.20
-        self._cem_elites = 8      # elites per state for CEM refinement
-        self._cem_new = 16     # new CEM samples per state
-
         # self.alpha_min = 0.02                    # floor to keep some exploration
         self.max_grad_norm = 5
         self.steps = 0
@@ -227,36 +213,6 @@ class SACDistanceDiffusionAgent:
         print(
             f"[Init] lr={lr}, gamma={gamma}, tau={tau}, rep_loss_weight={rep_loss_weight}, target_entropy={self.target_entropy:.2f}")
         print(f'Kernel aux weight: {self.kernel_aux_weight}, kernel temp: {self.kernel_temp}, kernel cand: {self.kernel_cand}, kernel state k: {self.kernel_state_k}, kernel adaptive tau: {self.kernel_adaptive_tau}')
-
-    @torch.no_grad()
-    def _bank_add_env_action(self, a_env: torch.Tensor):
-        """
-        Add an env-space action (B, act_dim) into the global bank (stored in [-1,1]).
-        """
-        if a_env.dim() == 1:
-            a_env = a_env.unsqueeze(0)
-        # (B, A) in [-1,1]
-        a_norm = self._env_to_action(a_env)
-        n = a_norm.size(0)
-        idx = (torch.arange(n, device=self.device) +
-               self.bank_ptr) % self.bank_max
-        self.action_bank[idx] = a_norm
-        self.bank_ptr = int((self.bank_ptr + n) % self.bank_max)
-        self.bank_filled = min(self.bank_max, self.bank_filled + n)
-
-    @torch.no_grad()
-    def _bank_sample(self, B: int, M: int) -> torch.Tensor:
-        """
-        Sample (B, M, A) actions from the global bank with small jitter; if empty, fallback to uniform.
-        """
-        if self.bank_filled == 0:
-            # fallback: wide uniform in [-1,1]
-            return (2.0 * torch.rand(B, M, self.act_dim, device=self.device) - 1.0).clamp(-1, 1)
-        idx = torch.randint(0, self.bank_filled, (B, M), device=self.device)
-        a = self.action_bank[idx]  # (B, M, A)
-        if self._bank_jitter > 0:
-            a = (a + self._bank_jitter * torch.randn_like(a)).clamp(-1, 1)
-        return a
 
     @property
     def alpha(self):
@@ -333,93 +289,7 @@ class SACDistanceDiffusionAgent:
         loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
-
-    def _new_actor_alpha_loss(self, obs):
-
-        instate = False  # choose in-state Qhat
-
-        if instate:
-            obs_n = self.obs_rms.normalize(obs)
-
-            a, logp, _ = self.actor.sample(obs_n)
-
-            # sample candidates
-            obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
-                self.kernel_cand)
-            obs_c_n = self.obs_rms.normalize(obs_c)
-            act_c = self._env_to_action(act_env_c)
-
-            # kernel similarities in rep space
-            z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
-                              dim=1)                 # (B,H)
-
-            with torch.no_grad():
-                z_c = F.normalize(
-                    self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
-
-            S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
-
-            # Compute per-sample k based on cosine similarity threshold
-            cos_sim_threshold = 0.85
-            num_above_threshold = (
-                S_full > cos_sim_threshold).sum(dim=1)  # [B]
-            # print(f'num_above_threshold: {num_above_threshold}')
-            k_per_sample = torch.clamp(
-                num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
-            # print(f'k_per_sample: {k_per_sample}')
-
-            S_masked, top_vals, top_idx = differentiable_topk(
-                S_full, k_per_sample)
-
-            # take top_vals without infinite values
-            top_vals = top_vals[torch.isfinite(top_vals)]
-
-            # adaptive tau per row
-            # if self.kernel_adaptive_tau:
-            W = torch.softmax(S_masked, dim=1)
-
-            # targets: critics' Q rather than returns (much better bias)
-            with torch.no_grad():
-                qc1, qc2 = self.q_targ(obs_c_n, act_c)
-                qc = torch.min(qc1, qc2).unsqueeze(0)
-
-            # (B,1)
-            Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
-            # print(f'Qhat mean: {Qhat.mean().item()}')
-
-        # in-state Qhat
-        else:
-            # Qhat, logp = self._qhat_in_state(obs,
-            #                                  K=32,
-            #                                  noise_std=0.1,
-            #                                  softmax_temp=1.0,
-            #                                  eps=0.05)
-
-            # Normalized in-state Qhat
-            Qhat, logp = self._qhat_in_state_norm(obs,
-                                                  K=self.K,
-                                                  noise_std=self.noise_std,
-                                                  softmax_temp=1.0,
-                                                  eps=0.05)
-
-        alpha = self.log_alpha.exp()
-
-        entropy_loss = (alpha * logp).mean()
-
-        actor_loss = entropy_loss - Qhat.mean()
-        alpha_loss = -(self.log_alpha *
-                       (logp + self.target_entropy).detach()).mean()
-
-        logs = {
-            # "kernel/top_state_sim_mean": float(top_vals.mean().item()),
-            "kernel/aux_term": float(-Qhat.mean().item()),
-            "train/actor_entropy_loss": float(entropy_loss.item())}
-
-        if wandb.run is not None:
-            wandb.log(logs, step=self.steps)
-
-        return actor_loss, alpha_loss
-
+    
     def _rep_loss(self, obs, act_env, next_obs, done):
         # Use rep trunk and TARGET rep trunk (stop-grad on next)
         obs_n = self.obs_rms.normalize(obs)
@@ -448,466 +318,152 @@ class SACDistanceDiffusionAgent:
         )
         return loss, info
 
-    def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
-                       softmax_temp: float = 1.0, eps: float = 0.05):
-
-        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
-        B = obs_n.shape[0]
-        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
-
-        # propose K actions per current state
-        with torch.no_grad():
-            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
-            if noise_std > 0:
-                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
-
-            z_k = F.normalize(self.rep_trunk_targ(
-                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
-            q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(B, K, 1)              # (B,K,1)
-
-        # anchor at current policy action
-        a_anchor, logp, _ = self.actor.sample(obs_n)               # (B,A)
-        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
-                          p=2, dim=1)         # (B,H)
-
-        # cosine sims to K proposals for the *same* state
-        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
-        S = torch.einsum('bd,bkd->bk', z_i, z_k_view)           # (B,K)
-
-        W = torch.softmax(S / softmax_temp, dim=1)              # (B,K)
-        if eps > 0.0:                                           # keep gradients alive
-            W = (1 - eps) * W + eps / K
-
-        Qhat = (W.unsqueeze(-1) * qk).sum(dim=1)                # (B,1)
-        return Qhat, logp
-
-    def _qhat_in_state_norm(self, obs, K: int = 64, noise_std: float = 0.1,
-                            softmax_temp: float = 1.0, eps: float = 0.05):
-
-        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
-        B = obs_n.shape[0]
-        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
-
-        # --- propose K actions per current state (stop-grad path for proposals) ---
-        with torch.no_grad():
-            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
-            if noise_std > 0:
-                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
-
-            z_k = F.normalize(self.rep_trunk_targ(
-                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
-            q1k, q2k = self.q_targ(obs_rep, a_k)
-            # (B,K,1)   (stop-grad)
-            qk = torch.min(q1k, q2k).view(B, K, 1)
-
-        # --- anchor at current policy action (this branch carries gradients) ---
-        a_anchor, logp, _ = self.actor.sample(obs_n)            # (B,A)
-        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor), p=2, dim=1)  # (B,H)
-
-        # --- cosine sims to K proposals for the same state ---
-        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
-        S = torch.einsum('bd,bkd->bk', z_i, z_k_view).clamp(-1.0, 1.0)  # (B,K)
-
-        # --- kernel bandwidth τ: cosine-anneal + optional adaptive from row std ---
-        tau_row = self._kernel_tau_instate(
-            S, base_temp=softmax_temp)    # (B,1)
-
-        # --- softmax weights with τ (plus tiny ε smoothing for stability) ---
-        W = torch.softmax(S / tau_row, dim=1)                   # (B,K)
-        if eps > 0.0:
-            W = (1.0 - eps) * W + eps / K
-
-        # --- advantage-centering: q̃_k = q_k - \bar q  (baseline is stop-grad) ---
-        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
-                                           keepdim=True).detach()  # (B,1,1)
-        # (B,K,1)
-        q_tilde = qk - q_bar
-
-        # --- centered readout ---
-        Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)            # (B,1)
-
-        # (optional) diagnostics
-        if wandb.run is not None:
-            wandb.log({
-                "kernel_instate/tau_mean": float(tau_row.mean().item()),
-                "kernel_instate/top_sim_mean": float(S.max(dim=1).values.mean().item()),
-                "kernel_instate/qbar_mean": float(q_bar.mean().item()),
-                "kernel_instate/qtilde_abs_mean": float(q_tilde.abs().mean().item()),
-            }, step=self.steps)
-
-        return Qhat, logp
-
-    def _qhat_in_state_fast(self,
-                            obs,
-                            K: int = 64,
-                            noise_std: float = 0.10,
-                            base_temp: float = 1.0,
-                            eps_w: float = 1e-3,
-                            positive_tail: bool = True,
-                            multi_tau: bool = True,
-                            keff_target_frac: float = 0.4,   # target effective support ~ 0.4*Ktot
-                            keff_min_frac: float = 0.2,      # clamps for safety
-                            keff_max_frac: float = 0.6,
-                            cem_elites: int = 8,             # CEM-lite elites per state
-                            cem_new: int = 16,               # new samples per state
-                            m_anchors: int = 1,              # multi-anchor variance reduction
-                            bary_lambda: float = 0.2):       # tiny barycentric attraction
+    def _denoiser_step(self, obs, K: int = 64, beta: float = 0.10):
         """
-        In-state Q̂ with stability + acceleration:
-        - Proposals: K from π + small noise, then CEM-lite augments with 'cem_new'
-        - Weights: softmax over cosine sims, adaptive τ (keff tracking), multi-τ average
-        - Advantage: centered, optionally positive-tail only (ReLU), tiny clipping
-        - Barycentric boost: -λ * < z_i , z_bar >  (z_bar stop-grad), improves step size
-        - Optional M anchors averaged for variance reduction
-
-        Returns:
-        Qhat_mean: (B,1)
-        logp_mean: (B,)  (mean over anchors)
-        bary_loss: scalar (already with the correct sign to be added to actor loss)
-        """
-        device = self.device
-        obs_n = self.obs_rms.normalize(obs)                       # (B,D)
-        B = obs_n.size(0)
-
-        # ---------- proposals (stop-grad path) ----------
-        with torch.no_grad():
-            # initial K samples from current policy
-            obs_rep0 = obs_n.repeat_interleave(K, dim=0)          # (B*K,D)
-            a0, _, _ = self.actor.sample(obs_rep0)                # (B*K,A)
-            if noise_std > 0:
-                a0 = (a0 + noise_std * torch.randn_like(a0)).clamp(-1, 1)
-            A0 = a0.view(B, K, self.act_dim)                      # (B,K,A)
-            K0 = K
-
-            # evaluate critic on initial proposals
-            q1_0, q2_0 = self.q_targ(obs_rep0, a0)                # (B*K,1)
-            qk0 = torch.min(q1_0, q2_0).view(B, K0)               # (B,K)
-
-            # ---- CEM-lite refinement (cheap, stop-grad) ----
-            m = min(cem_elites, K0) if cem_elites > 0 else 0
-            if m > 0 and cem_new > 0:
-                elite_idx = torch.topk(
-                    qk0, k=m, dim=1).indices                       # (B,m)
-                elite = torch.gather(
-                    A0, 1, elite_idx.unsqueeze(-1).expand(-1, -1, self.act_dim))  # (B,m,A)
-                # (B,1,A)
-                mu = elite.mean(dim=1, keepdim=True)
-                std = elite.std(dim=1, keepdim=True).clamp_min(
-                    1e-3)                  # (B,1,A)
-                A_cem = (mu + std * torch.randn(B, cem_new,
-                         self.act_dim, device=device)).tanh()   # (B,cem_new,A)
-                # (B,Ktot,A)
-                A_all = torch.cat([A0, A_cem], dim=1)
-            else:
-                A_all = A0
-
-            Ktot = A_all.size(1)
-            obs_rep = obs_n.repeat_interleave(
-                Ktot, dim=0)                             # (B*Ktot,D)
-            A_all_flat = A_all.reshape(
-                B * Ktot, self.act_dim)                         # (B*Ktot,A)
-
-            # critic targets on augmented set
-            # (B*Ktot,1)
-            q1, q2 = self.q_targ(obs_rep, A_all_flat)
-            # (B,Ktot,1)
-            qk = torch.min(q1, q2).view(B, Ktot, 1)
-
-            # representation targets of proposals
-            z_k = F.normalize(self.rep_trunk_targ(
-                obs_rep, A_all_flat), p=2, dim=1)    # (B*Ktot,H)
-            # (B,Ktot,H)
-            z_k = z_k.view(B, Ktot, -1)
-
-        # ---------- adaptive τ via K_eff of similarity weights ----------
-        # we adapt τ from S only (independent of q), using a persistent tracker
-        if not hasattr(self, "_tau_instate"):
-            self._tau_instate = torch.tensor(
-                float(max(0.75, base_temp)), device=device)
-
-        # choose an "anchor for τ adaptation": use current policy once
-        a_tau, _, _ = self.actor.sample(
-            obs_n)                                         # (B,A)
-        z_tau = F.normalize(self.rep_trunk(obs_n, a_tau),
-                            p=2, dim=1)                  # (B,H)
-
-        # cosine similarities S (B,Ktot)
-        S_tau = torch.einsum('bd,bkd->bk', z_tau, z_k).clamp(-1.0, 1.0)
-
-        # multiplicative update to keep K_eff ≈ keff_target_frac*Ktot (within [keff_min, keff_max])
-        eps = 1e-8
-
-        def keff_from_tau(tau_scalar: torch.Tensor):
-            Wtmp = torch.softmax(S_tau / (tau_scalar + eps),
-                                 dim=1)                    # (B,Ktot)
-            # (B,)
-            keff = 1.0 / (Wtmp.pow(2).sum(dim=1) + eps)
-            return Wtmp, keff
-
-        Wtmp, keff = keff_from_tau(self._tau_instate)
-        tgt = float(max(keff_min_frac * Ktot,
-                    min(keff_max_frac * Ktot, keff_target_frac * Ktot)))
-        err = (keff.mean().item() - tgt) / max(tgt, 1.0)
-        # small, stable correction; clamp τ to reasonable range
-        self._tau_instate = (self._tau_instate *
-                             math.exp(0.35 * (-err))).clamp(0.1, 5.0)
-
-        # ---------- multi-anchor pass (M times) ----------
-        Qhat_list = []
-        logp_list = []
-        bary_terms = []
-
-        for _ in range(max(1, m_anchors)):
-            # anchor (this branch carries gradients)
-            a_anchor, logp, _ = self.actor.sample(
-                obs_n)                                # (B,A)
-            z_i = F.normalize(self.rep_trunk(obs_n, a_anchor),
-                              p=2, dim=1)              # (B,H)
-            # (B,)
-            logp_list.append(logp)
-
-            # cosine sims S for this anchor
-            S = torch.einsum('bd,bkd->bk', z_i, z_k).clamp(-1.0,
-                                                           1.0)                   # (B,Ktot)
-
-            # weights W with τ; optional multi-τ averaging
-            if multi_tau:
-                taus = [self._tau_instate, 2.0 *
-                        self._tau_instate, 4.0 * self._tau_instate]
-                W_stack = [torch.softmax(S / (t + eps), dim=1)
-                           for t in taus]           # list of (B,Ktot)
-                W = torch.stack(W_stack, dim=0).mean(
-                    dim=0)                             # (B,Ktot)
-            else:
-                W = torch.softmax(S / (self._tau_instate + eps),
-                                  dim=1)                 # (B,Ktot)
-
-            # tiny ε-smoothing to avoid zero-weights
-            W = (1.0 - eps_w) * W + eps_w / Ktot
-
-            # robust centering baseline
-            with torch.no_grad():
-                # (B,Ktot)
-                qk_flat = qk.squeeze(-1)
-                # mean + median baseline (robust to outliers)
-                # (B,1)
-                q_mean = (W * qk_flat).sum(dim=1, keepdim=True)
-                q_med = qk_flat.median(
-                    dim=1, keepdim=True).values                     # (B,1)
-                # (B,1)
-                q_bar = 0.5 * (q_mean + q_med)
-            # centered (B,Ktot,1)
-            # (B,Ktot,1)
-            q_tilde = qk - q_bar.unsqueeze(-1)
-
-            if positive_tail:
-                # keep only positive tail
-                q_tilde = torch.relu(q_tilde)
-
-            # mild clipping to stabilize huge early spikes
-            q_tilde = q_tilde.clamp(min=0.0, max=10.0)
-
-            # centered readout
-            # (B,1)
-            Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)
-            Qhat_list.append(Qhat)
-
-            # barycentric attraction: -λ * < z_i , z_bar >  (z_bar stop-grad)
-            with torch.no_grad():
-                # (B,H)
-                z_bar = (W.unsqueeze(-1) * z_k).sum(dim=1)
-            # scalar
-            bary = - bary_lambda * (z_i * z_bar).sum(dim=1).mean()
-            bary_terms.append(bary)
-
-        # aggregate anchors
-        Qhat_mean = torch.stack(Qhat_list, dim=0).mean(
-            dim=0)                           # (B,1)
-        logp_mean = torch.stack(logp_list, dim=0).mean(
-            dim=0)                           # (B,)
-        bary_loss = torch.stack(bary_terms, dim=0).mean(
-        )                               # scalar
-
-        # diagnostics
-        if wandb.run is not None:
-            keff_now = (1.0 / (W.pow(2).sum(dim=1) + eps)).mean().item()
-            wandb.log({
-                "instate_fast/tau": float(self._tau_instate.item()),
-                "instate_fast/keff": float(keff_now),
-                "instate_fast/top_sim": float(S.max(dim=1).values.mean().item()),
-            }, step=self.steps)
-
-        return Qhat_mean, logp_mean, bary_loss
-
-    def _actor_loss_instate_fast(self, obs,
-                                 K: int = 64,
-                                 noise_std: float = 0.10,
-                                 base_temp: float = 1.0,
-                                 positive_tail: bool = True,
-                                 multi_tau: bool = True,
-                                 cem_elites: int = 8,
-                                 cem_new: int = 16,
-                                 m_anchors: int = 1,
-                                 bary_lambda: float = 0.2):
-
-        Qhat, logp, bary_loss = self._qhat_in_state_fast(
-            obs,
-            K=K,
-            noise_std=noise_std,
-            base_temp=base_temp,
-            positive_tail=positive_tail,
-            multi_tau=multi_tau,
-            cem_elites=cem_elites,
-            cem_new=cem_new,
-            m_anchors=m_anchors,
-            bary_lambda=bary_lambda,
-        )
-
-        # entropy term (optionally clamp α early for stability)
-        alpha = self.log_alpha.exp()
-        # alpha = torch.clamp(alpha, min=0.03)  # optional floor during first ~200k steps
-
-        entropy_loss = (alpha * logp).mean()
-        actor_loss = entropy_loss - Qhat.mean() + bary_loss
-
-        # standard alpha update
-        alpha_loss = -(self.log_alpha *
-                       (logp + self.target_entropy).detach()).mean()
-
-        if wandb.run is not None:
-            wandb.log({
-                "instate_fast/Qhat": float(Qhat.mean().item()),
-                "instate_fast/entropy_loss": float(entropy_loss.item()),
-                "instate_fast/bary_loss": float(bary_loss.item()),
-                "train/alpha": float(alpha.item()),
-            }, step=self.steps)
-
-        return actor_loss, alpha_loss
-
-    def _kernel_tau_instate(self, S_rowwise: torch.Tensor, base_temp: float) -> torch.Tensor:
-        """
-        S_rowwise: (B, K) cosine sims for a single state across K proposals.
-        Returns τ as (B,1). Uses cosine anneal τ_max->τ_min, plus optional adaptive bump from row std.
-        """
-        B = S_rowwise.size(0)
-        device = S_rowwise.device
-
-        # schedule window & bounds
-        T_sched = 200_000
-        # start wider than config
-        tau_max = max(0.75, float(base_temp))
-        tau_min = max(0.05, 0.30 * float(base_temp))   # end sharper
-
-        p = min(1.0, float(self.steps) / float(T_sched))
-        # cosine anneal: p=0 -> tau_max, p=1 -> tau_min
-        tau_sched = tau_min + 0.5 * \
-            (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
-
-        if getattr(self, "kernel_adaptive_tau", False):
-            row_std = S_rowwise.std(dim=1, keepdim=True).clamp(min=1e-4)
-            tau_row = torch.full(
-                (B, 1), tau_sched, device=device) + row_std  # c=1.0
-        else:
-            tau_row = torch.full((B, 1), tau_sched, device=device)
-
-        return tau_row  # (B,1)
-
-    def _denoiser_step(self, obs, K: int = 64):
-        """
-        Train g_psi to denoise proposal latents toward high-Q latents.
-        Uses ONLY stop-grad targets/weights; no ∂Q flows.
+        Train g_psi to denoise *top-tail* (CVaR) latents toward high-Q latents.
+        - beta: tail level (0.1 keeps top 10%)
         """
         eps = 1e-8
         device = self.device
         B = obs.size(0)
 
-        # ---- proposals (stop-grad) ----
         with torch.no_grad():
-            obs_n = self.obs_rms.normalize(obs)                        # (B,D)
-            obs_rep = obs_n.repeat_interleave(
-                K, dim=0)                # (B*K,D)
-            a_k, _, _ = self.actor.sample(
-                obs_rep)                     # (B*K,A)
+            obs_n = self.obs_rms.normalize(obs)                      # (B,D)
+            obs_rep = obs_n.repeat_interleave(K, dim=0)              # (B*K,D)
+
+            a_k, _, _ = self.actor.sample(obs_rep)                   # (B*K,A)
             a_k = (a_k + 0.10 * torch.randn_like(a_k)).clamp(-1, 1)
 
-            z_k = F.normalize(self.rep_trunk_targ(
-                obs_rep, a_k), p=2, dim=1)   # (B*K,H)
-            # (B,K,H)
-            z_k = z_k.view(B, K, -1)
+            z_k = F.normalize(self.rep_trunk_targ(obs_rep, a_k), p=2, dim=1)
+            z_k = z_k.view(B, K, -1)                                 # (B,K,H)
 
-            # (B*K,1)
             q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(
-                B, K)                                 # (B,K)
+            qk = torch.min(q1k, q2k).view(B, K)                      # (B,K)
 
-            # value-tempered weights (stop-grad)
-            q_center = qk.mean(dim=1, keepdim=True)
-            w = torch.softmax(
-                (qk - q_center)/self.denoiser_tau_q, dim=1)       # (B,K)
+            # ---- CVaR tail weights (stop-grad) ----
+            # threshold u: top-beta tail
+            u = torch.quantile(qk, q=1.0 - beta, dim=1,
+                               keepdim=True)     # (B,1)
+            # (B,K)
+            v = torch.relu(qk - u)
+            # small smoothing so we never get all zeros
+            v = v + 1e-6
+            # (B,K)
+            w = v / v.sum(dim=1, keepdim=True)
 
-            # noisy latents to denoise
+            # noisy latents
             z_noisy = z_k + self.denoiser_sigma * torch.randn_like(z_k)
             z_noisy = F.normalize(z_noisy, p=2, dim=-1)
 
-        # ---- state conditioning ----
-        obs_n = self.obs_rms.normalize(
-            obs)                                     # (B,D)
-        # (B,S)
+        obs_n = self.obs_rms.normalize(obs)
         s_emb = self.state_cond(obs_n)
-        # ---- forward and loss (weighted cosine) ----
+
         # (B,K,H)
         z_hat = self.denoiser(z_noisy, s_emb)
-        # cosine similarity ∈ [-1,1]; want z_hat ≈ z_k  ⇒ maximize cos ⇒ minimize (1 - cos)
         cos = (z_hat * z_k).sum(dim=-1).clamp(-1.0,
-                                              1.0)                        # (B,K)
+                                              1.0)                  # (B,K)
+
+        # minimize (1 - cosine) weighted by tail weights
         loss = (w * (1.0 - cos)).sum(dim=1).mean()
 
         self.optim_dnsr.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(list(self.denoiser.parameters()) + list(self.state_cond.parameters()),
-                                       self.max_dnsr_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            list(self.denoiser.parameters()) +
+            list(self.state_cond.parameters()),
+            self.max_dnsr_grad_norm
+        )
         self.optim_dnsr.step()
 
         if wandb.run is not None:
             wandb.log({"ldp/denoiser_loss": float(loss.item()),
-                       "ldp/sigma": float(self.denoiser_sigma)}, step=self.steps)
+                       "ldp/sigma": float(self.denoiser_sigma),
+                       "ldp/cvar_beta": float(beta)}, step=self.steps)
 
-    def _actor_loss_ldp(self, obs, K: int = 64, pull_weight: float = 1.0):
+    def _actor_loss_ldp(self,
+                        obs,
+                        K: int = 64,
+                        pull_weight: float = 1.0,
+                        beta_cvar: float = 0.10,      # CVaR level for both denoiser and jump
+                        jump_thresh: float = 0.03,    # if 1 - cos < thresh, use a "jump"
+                        # (sigma_max, sigma_min, T_anneal)
+                        sigma_schedule: tuple = (0.30, 0.15, 200_000)
+                        ):
         """
-        Latent Diffusion Pull actor:
-        1) Train denoiser g_psi with _denoiser_step(...) (call outside or few times).
-        2) Anchor z_i = φ(s, a) with grad.
-        3) z_hat = stop( g_psi(s_emb, z_i + σ ε) ).
-        4) Actor loss = α E[logπ]  +  pull_weight * E[ || z_i - z_hat ||^2 ]  (or cosine).
+        Latent Diffusion Pull (aggressive):
+        - trains denoiser on CVaR tail (top beta)
+        - actor pull weight is amplified by the current misalignment (1 - cos)
+        - when the denoiser pull is too small, jump to a CVaR barycenter in latent space
         """
-        # (optional) do a tiny denoiser update here; or do it in the trainer loop
+        # ---- anneal sigma high -> low (bigger steps early, precise later) ----
+        sig_max, sig_min, T = sigma_schedule
+        p = min(1.0, float(self.steps) / float(T))
+        # cosine anneal
+        self.denoiser_sigma = sig_min + 0.5 * \
+            (sig_max - sig_min) * (1.0 + math.cos(math.pi * p))
+
+        # ---- a couple of denoiser steps on CVaR tail ----
         for _ in range(self.denoiser_steps):
-            self._denoiser_step(obs, K=K)
+            self._denoiser_step(obs, K=K, beta=beta_cvar)
 
-        obs_n = self.obs_rms.normalize(
-            obs)                              # (B,D)
-        a_anchor, logp, _ = self.actor.sample(
-            obs_n)                     # (B,A)
-
-        # current anchor latent (with gradients)
+        obs_n = self.obs_rms.normalize(obs)                          # (B,D)
+        a_anchor, logp, _ = self.actor.sample(obs_n)
         z_i = F.normalize(self.rep_trunk(
             obs_n, a_anchor), p=2, dim=1)   # (B,H)
 
-        # denoise the *anchor latent* (stop-grad)
+        # ---- denoised target of the anchor (stop-grad) ----
         with torch.no_grad():
-            # (B,S)
             s_emb = self.state_cond(obs_n)
             z_noisy = F.normalize(
                 z_i + self.denoiser_sigma * torch.randn_like(z_i), p=2, dim=-1)
-            # (B,H) stop-grad via ctx
-            z_hat = self.denoiser(z_noisy, s_emb)
+            z_hat = self.denoiser(
+                z_noisy, s_emb)                        # (B,H)
 
-        # pull in latent space (choose cosine distance for unit sphere)
-        cos = (z_i * z_hat).sum(dim=-1).clamp(-1.0, 1.0)                 # (B,)
-        pull_loss = pull_weight * (1.0 - cos).mean()
+        # cosine gap and adaptive pull strength
+        cos_i = (z_i * z_hat).sum(dim=-1).clamp(-1.0, 1.0)               # (B,)
+        gap = (1.0 - cos_i).detach()                                     # (B,)
+        # amplify pull when almost aligned (prevents tiny gradients)
+        # pull_weight_eff in [pull_weight, ~2.5 * pull_weight]
+        pull_weight_eff = pull_weight * \
+            (1.0 + 1.5 * (gap / (gap.mean() + 1e-6))).clamp(1.0, 2.5).mean()
 
-        # SAC entropy
+        # base pull loss
+        pull_loss = pull_weight_eff * (1.0 - cos_i).mean()
+
+        # ---- fallback: CVaR barycenter "jump" if pull is vanishing ----
+        # condition: mean gap below threshold
+        if gap.mean().item() < jump_thresh:
+            with torch.no_grad():
+                # reuse proposals to compute a CVaR latent barycenter
+                B = obs_n.size(0)
+                obs_rep = obs_n.repeat_interleave(K, dim=0)
+                a_k, _, _ = self.actor.sample(obs_rep)
+                a_k = (a_k + 0.10 * torch.randn_like(a_k)).clamp(-1, 1)
+
+                z_k = F.normalize(self.rep_trunk_targ(
+                    obs_rep, a_k), p=2, dim=1).view(B, K, -1)
+                q1k, q2k = self.q_targ(obs_rep, a_k)
+                qk = torch.min(q1k, q2k).view(B, K)
+
+                u = torch.quantile(qk, q=1.0 - beta_cvar,
+                                   dim=1, keepdim=True)  # (B,1)
+                # (B,K)
+                v = torch.relu(qk - u) + 1e-6
+                v = v / v.sum(dim=1, keepdim=True)
+                z_cvar = F.normalize(torch.einsum(
+                    'bk,bkd->bd', v, z_k), p=2, dim=1)  # (B,H)
+
+            # add a jump loss
+            cos_jump = (z_i * z_cvar).sum(dim=-1).clamp(-1.0, 1.0)
+            # scale jump to be comparable to pull
+            jump_loss = pull_weight * (1.0 - cos_jump).mean()
+            pull_loss = pull_loss + 0.5 * jump_loss  # blend to keep stability
+
+            if wandb.run is not None:
+                wandb.log({"ldp/jump_triggered": 1.0,
+                           "ldp/jump_loss": float(jump_loss.item())}, step=self.steps)
+
+        # ---- SAC entropy and alpha update ----
         alpha = self.log_alpha.exp()
         entropy_loss = (alpha * logp).mean()
         alpha_loss = -(self.log_alpha *
@@ -916,9 +472,13 @@ class SACDistanceDiffusionAgent:
         actor_loss = entropy_loss + pull_loss
 
         if wandb.run is not None:
-            wandb.log({"ldp/pull_loss": float(pull_loss.item()),
-                       "ldp/cos_anchor_hat": float(cos.mean().item()),
-                       "train/alpha": float(alpha.item())}, step=self.steps)
+            wandb.log({
+                "ldp/pull_loss": float(pull_loss.item()),
+                "ldp/cos_anchor_hat": float(cos_i.mean().item()),
+                "ldp/sigma": float(self.denoiser_sigma),
+                "ldp/pull_weight_eff": float(pull_weight_eff.item() if torch.is_tensor(pull_weight_eff) else pull_weight_eff),
+                "ldp/gap_mean": float(gap.mean().item())
+            }, step=self.steps)
 
         return actor_loss, alpha_loss
 
@@ -947,8 +507,6 @@ class SACDistanceDiffusionAgent:
 
             o2, r, done, trunc, _ = self.env.step(a_env)
             self.replay.add(o, o2, a_env, r, done or trunc)
-            self._bank_add_env_action(torch.as_tensor(
-                a_env, device=self.device, dtype=torch.float32))
 
             ep_r += r
             ep_len += 1
@@ -990,23 +548,28 @@ class SACDistanceDiffusionAgent:
                     wandb.log({**qinfo, "train/q_loss": float(loss_q.item()),
                                "train/q_grad_norm": float(q_grad_norm)}, step=self.steps)
 
-                # ---- Representation loss (with target rep trunk) ----
-                if self.rep_loss_weight > 0.0 and self.kernel_aux_weight > 0.0:
-                    rep_loss, rep_info = self._rep_loss(
-                        obs, act_env, next_obs, done_b)
-                    self.optim_rep.zero_grad()
-                    rep_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        self.rep_trunk.parameters(), self.max_grad_norm)
-                    self.optim_rep.step()
-                    rep_logs = {f"rep/{k}": v for k, v in rep_info.items()}
-                    rep_logs.update(
-                        {"rep/loss": float(rep_loss.item()), "step": self.steps})
-                    if wandb.run is not None:
-                        wandb.log(rep_logs, step=self.steps)
+                # ---- Representation loss (with target rep trunk) ----                
+                rep_loss, rep_info = self._rep_loss(
+                    obs, act_env, next_obs, done_b)
+                self.optim_rep.zero_grad()
+                rep_loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.rep_trunk.parameters(), self.max_grad_norm)
+                self.optim_rep.step()
+                rep_logs = {f"rep/{k}": v for k, v in rep_info.items()}
+                rep_logs.update(
+                    {"rep/loss": float(rep_loss.item()), "step": self.steps})
+                if wandb.run is not None:
+                    wandb.log(rep_logs, step=self.steps)
 
-                    actor_loss, alpha_loss = self._actor_loss_ldp(
-                        obs, K=self.K if hasattr(self, "K") else 64, pull_weight=1.0)
+                actor_loss, alpha_loss = self._actor_loss_ldp(
+                    obs,
+                    K=self.K,
+                    pull_weight=1.5, # 1.0
+                    beta_cvar=0.05, # 0.10
+                    jump_thresh=0.03,
+                    sigma_schedule=(0.30, 0.15, 200_000)
+                )
 
                 self.optim_actor.zero_grad()
                 actor_loss.backward()
