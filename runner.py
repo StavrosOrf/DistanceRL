@@ -24,7 +24,7 @@ comp_samples = 4096
 noise_type = "OU"  # "OU", "SchedOU", "Normal"
 
 expl_sigma = 0.1  # 0.1, 0.2,
-K = 128
+K = 64
 
 alpha_cql = 0.0
 
@@ -44,7 +44,7 @@ PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
 # PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
+for algo in ['SACDistanceDiffusionAgent']:  # 'RTGRecDistRL', 'StochRTGRecRL'
     for env in ['HalfCheetah-v5']:
         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
             rep_gamma_shape = v_gamma
@@ -56,7 +56,7 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
                             # +  '-' + name
-                            name = f'FastActorLoss_{algo}'
+                            name = f'{algo}-K{K}'
 
                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                 f' --env-id {env}' + \

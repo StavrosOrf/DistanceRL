@@ -16,6 +16,7 @@ from dist_rl.utils import load_hyperparameters
 from dist_rl_fix.algos.sac_distance import SACDistanceAgent
 from dist_rl_fix.algos.kernelpolicy import KernelPolicyMixin
 from dist_rl_fix.algos.sac_distance_new import SACDistanceAgentNew
+from dist_rl_fix.algos.sac_distance_diffusion import SACDistanceDiffusionAgent
 from dist_rl_fix.algos.sac_wasserstein import SACWassersteinAgent
 from dist_rl_fix.utils import set_seed
 
@@ -47,7 +48,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="SACDistanceAgentNew")
+    parser.add_argument("--algo", type=str, default="SACDistanceDiffusionAgent")
     # parser.add_argument("--algo", type=str, default="DistRL")
     parser.add_argument("--model-save-path", type=str,
                         default="./saved_models/")
@@ -222,6 +223,17 @@ def main():
         setattr(args, 'save_dir', args.model_save_path)
         
         agent = SACDistanceAgentNew(**args.__dict__)
+
+        print(f'Running {args.algo} with kernel policy updates.')
+        
+    elif args.algo == "SACDistanceDiffusionAgent":
+        set_seed(args.seed)
+
+        setattr(args, 'rep_gamma_shape', args.v_gamma)  # for representation loss        
+        setattr(args, 'alpha', args.alpha)  # for representation loss        
+        setattr(args, 'save_dir', args.model_save_path)
+        
+        agent = SACDistanceDiffusionAgent(**args.__dict__)
 
         print(f'Running {args.algo} with kernel policy updates.')
     
