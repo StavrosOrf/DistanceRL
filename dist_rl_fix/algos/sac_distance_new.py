@@ -29,14 +29,9 @@ class SACDistanceAgentNew:
                  lr: float,
                  K: int,
                  expl_sigma: float,
-                 updates_per_step: int,
-                 kernel_aux_weight: float,
-                 kernel_temp: float,
-                 kernel_cand: int,
-                 kernel_state_k: int,
-                 kernel_adaptive_tau: bool,
                  target_entropy_scale: float,
-                 rep_loss_weight: float,
+                 updates_per_step: int,
+                 kernel_adaptive_tau: bool,
                  rep_gamma_shape: float,
                  rep_lam: float,
                  rep_huber: float,
@@ -44,15 +39,9 @@ class SACDistanceAgentNew:
                  save_dir: str,
                  **kwargs):
 
-        # === extra knobs (safe defaults) ===
-        self.target_entropy_scale = target_entropy_scale
         self.updates_per_step = updates_per_step
-        # optional kernel auxiliary to actor (improves early training)
-        self.kernel_aux_weight = kernel_aux_weight
-        self.kernel_temp = kernel_temp
-        self.kernel_cand = kernel_cand
-        self.kernel_state_k = kernel_state_k
         self.kernel_adaptive_tau = kernel_adaptive_tau
+        self.target_entropy_scale = target_entropy_scale
 
         self.K = K  # for in-state Qhat
         self.noise_std = expl_sigma
@@ -121,7 +110,6 @@ class SACDistanceAgentNew:
         self.obs_rms = RunningMeanStd(self.obs_dim, device=self.device)
 
         # Representation loss
-        self.rep_loss_weight = rep_loss_weight
         self.rep_gamma_shape = rep_gamma_shape
         self.rep_lam = rep_lam
         self.rep_huber = rep_huber
@@ -153,10 +141,7 @@ class SACDistanceAgentNew:
 
         print("[Init] SACDistanceAgent setup complete")
         print(
-            f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")
-        print(
-            f"[Init] lr={lr}, gamma={gamma}, tau={tau}, rep_loss_weight={rep_loss_weight}, target_entropy={self.target_entropy:.2f}")
-        print(f'Kernel aux weight: {self.kernel_aux_weight}, kernel temp: {self.kernel_temp}, kernel cand: {self.kernel_cand}, kernel state k: {self.kernel_state_k}, kernel adaptive tau: {self.kernel_adaptive_tau}')
+            f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
 
     @torch.no_grad()
     def _bank_add_env_action(self, a_env: torch.Tensor):
@@ -810,20 +795,19 @@ class SACDistanceAgentNew:
                     wandb.log({**qinfo, "train/q_loss": float(loss_q.item()),
                                "train/q_grad_norm": float(q_grad_norm)}, step=self.steps)
 
-                # ---- Representation loss (with target rep trunk) ----
-                if self.rep_loss_weight > 0.0 and self.kernel_aux_weight > 0.0:
-                    rep_loss, rep_info = self._rep_loss(
-                        obs, act_env, next_obs, done_b)
-                    self.optim_rep.zero_grad()
-                    rep_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(
-                        self.rep_trunk.parameters(), self.max_grad_norm)
-                    self.optim_rep.step()
-                    rep_logs = {f"rep/{k}": v for k, v in rep_info.items()}
-                    rep_logs.update(
-                        {"rep/loss": float(rep_loss.item()), "step": self.steps})
-                    if wandb.run is not None:
-                        wandb.log(rep_logs, step=self.steps)
+
+                rep_loss, rep_info = self._rep_loss(
+                    obs, act_env, next_obs, done_b)
+                self.optim_rep.zero_grad()
+                rep_loss.backward()
+                torch.nn.utils.clip_grad_norm_(
+                    self.rep_trunk.parameters(), self.max_grad_norm)
+                self.optim_rep.step()
+                rep_logs = {f"rep/{k}": v for k, v in rep_info.items()}
+                rep_logs.update(
+                    {"rep/loss": float(rep_loss.item()), "step": self.steps})
+                if wandb.run is not None:
+                    wandb.log(rep_logs, step=self.steps)
 
                 actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
 

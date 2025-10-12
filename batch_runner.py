@@ -12,7 +12,7 @@ import random
 # ---------------- General configuration ----------------
 
 partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
-algo = ['SACDistanceAgentNew']
+algo = ['DistAgent']
 group_name = "Ablation_"
 project_name = "DistRL" # DistRL_Rep
 
@@ -46,6 +46,7 @@ kernel_temp_default = 0.5
 kernel_cand_default = 2048
 kernel_state_k_default = 64
 kernel_adaptive_tau_default = 1
+kernel_aux_weight = 0.1
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
@@ -54,25 +55,26 @@ BOX2D_ENVS = ['LunarLanderContinuous-v3',
               'MountainCarContinuous-v0', 'Pendulum-v1'] #number of envs: 3
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1'] #number of envs: 2
 
+HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5'] #number of envs: 2
+
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 # ---------------- Ablation grids ----------------
 batch_size_grid = [256]
-K_grid = [64]
+K_grid = [64, 128, 256, 512]
 lr_grid = [1e-3]  # [1e-3]
-expl_sigma_grid = [0.1]
-seed_grid = [32, 22]
-target_entropy_scale_grid = [1]
-kernel_aux_weight = 0.1
+expl_sigma_grid = [0.2, 0.5]
+seed_grid = [42]
+target_entropy_scale_grid = [0.8, 1]
+
 
 # if directory does not exist, create it
 if not os.path.exists('./slurm_logs'):
     os.makedirs('./slurm_logs')
 
-for env in continuous_envs:
-# for env in ['HalfCheetah-v5']:
+for env in HARD_MUJOCO_ENVS:
     # for algo in ['tqc']:  # SB3_ALGOS:
-    for algo in SB3_ALGOS:
+    for algo in algo:
         for batch_size in batch_size_grid:
             for K in K_grid:            
                 for lr in lr_grid:
@@ -86,7 +88,7 @@ for env in continuous_envs:
                                         job_hours = 12
                                     
                                 if env in ['Humanoid-v5']:
-                                    buffer_size_default = 500_000
+                                    buffer_size_default = 800_000
                                     cpu_cores = 2 if partition == 'compute' else 4
 
                                 env_tag = env.replace('-', '')
