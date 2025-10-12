@@ -22,8 +22,9 @@ rep_gamma_shape = 0.5
 target_entropy_scale = 1
 comp_samples = 4096
 noise_type = "OU"  # "OU", "SchedOU", "Normal"
+
 expl_sigma = 0.1  # 0.1, 0.2,
-K = 256
+K = 128
 
 alpha_cql = 0.0
 
@@ -55,7 +56,7 @@ for algo in ['SACDistanceAgentNew']:  # 'RTGRecDistRL', 'StochRTGRecRL'
                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
                             # +  '-' + name
-                            name = f'InState64_Check_lrAdjust_MaxGradNorm_QTarget_NoisyRep_{algo}'
+                            name = f'KLActorLoss_{algo}'
 
                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                                 f' --env-id {env}' + \

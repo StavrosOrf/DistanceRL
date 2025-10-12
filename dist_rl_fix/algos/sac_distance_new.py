@@ -423,6 +423,90 @@ class SACDistanceAgentNew:
             }, step=self.steps)
 
         return Qhat, logp
+    
+    def _actor_loss_kl_instate(self,
+                            obs,
+                            K: int = 64,
+                            noise_std: float = 0.1,
+                            tau_w: float = 1.0,          # temperature for weights
+                            use_mpo_prior: bool = False, # if True, include π_old prior in weights
+                            w_clip: float = 100.0,       # guard against weight explosion
+                            eps_smooth: float = 1e-8,
+                            entropy_bonus: bool = True):
+        """
+        In-state advantage-weighted KL projection:
+        L_actor = - E_s [ Σ_k ẇ_k log πθ(a_k|s) ] + α E_s[log πθ(a_anchor|s)]
+        where ẇ_k ∝ exp((q_k - b_s)/tau_w) (optionally times π_old(a_k|s)).
+        No gradients through q_k or b_s. Uses only in-state proposals.
+        """
+        device = self.device
+        obs_n = self.obs_rms.normalize(obs)               # (B,D)
+        B = obs_n.size(0)
+
+        # ---- Proposals from current state (stop-grad) ----
+        obs_rep = obs_n.repeat_interleave(K, dim=0)       # (B*K,D)
+        with torch.no_grad():
+            a_k, logp_k_old, _ = self.actor.sample(obs_rep)   # (B*K,A)
+            if noise_std > 0:
+                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+
+            # target Q (stop-grad)
+            q1k, q2k = self.q_targ(obs_rep, a_k)
+            qk = torch.min(q1k, q2k).view(B, K)               # (B,K)
+
+        # ---- Baseline per state (advantage-centering) ----
+        # Option 1: softmax over cosine vs target trunk (like your kernel)
+        with torch.no_grad():
+            # anchor action for similarity (train branch, but no grad here)
+            a_anchor, _, _ = self.actor.sample(obs_n)         # (B,A)
+            z_i = F.normalize(self.rep_trunk(obs_n, a_anchor), p=2, dim=1)                # (B,H)
+            z_k = F.normalize(self.rep_trunk_targ(obs_rep, a_k), p=2, dim=1).view(B,K,-1) # (B,K,H)
+            S = torch.einsum('bd,bkd->bk', z_i, z_k)          # (B,K)
+            # optional similarity mixing into the baseline weights
+            W_sim = torch.softmax(S / max(0.5, tau_w), dim=1) # (B,K)
+
+            q_bar = (W_sim * qk).sum(dim=1, keepdim=True)     # (B,1)
+
+        # ---- Advantage weights (detached) ----
+        adv = (qk - q_bar).detach()                           # (B,K)
+        w = torch.exp((adv / max(1e-6, tau_w)).clamp(max=math.log(w_clip)))  # (B,K)
+
+        if use_mpo_prior:
+            # multiply by prior π_old(a_k|s) for trust region (detached)
+            w = w * torch.exp(logp_k_old.view(B, K).detach())
+
+        # normalize per-state
+        w = w / (w.sum(dim=1, keepdim=True) + eps_smooth)     # (B,K)
+        w = w.detach()
+
+        # ---- Weighted log-likelihood (forward-KL projection) ----
+        # Evaluate current log-prob on proposals (with gradient)
+        logp_new = self.actor.log_prob(obs_rep, a_k).view(B, K)   # implement .log_prob for your actor
+        mle_term = -(w * logp_new).sum(dim=1).mean()              # (scalar)
+
+        # Optional entropy bonus on anchor action (keep your α temperature)
+        a_anchor, logp_anchor, _ = self.actor.sample(obs_n)
+        entropy_term = (self.log_alpha.exp() * logp_anchor).mean() if entropy_bonus else 0.0
+
+        actor_loss = mle_term + entropy_term
+
+        # Standard alpha update if using entropy bonus
+        alpha_loss = None
+        if entropy_bonus:
+            alpha_loss = -(self.log_alpha * (logp_anchor + self.target_entropy).detach()).mean()
+
+        # logs
+        if wandb.run is not None:
+            wandb.log({
+                "kl_instate/mle_term": float(mle_term.item()),
+                "kl_instate/entropy_term": float(entropy_term if isinstance(entropy_term, float) else entropy_term.item()),
+                "kl_instate/tau_w": float(tau_w),
+                "kl_instate/w_effK": float((1.0 / (w.pow(2).sum(dim=1) + 1e-8)).mean().item()),
+                "kl_instate/adv_abs_mean": float(adv.abs().mean().item()),
+            }, step=self.steps)
+
+        return actor_loss, alpha_loss
+
 
     def _kernel_tau_instate(self, S_rowwise: torch.Tensor, base_temp: float) -> torch.Tensor:
         """
@@ -532,7 +616,17 @@ class SACDistanceAgentNew:
                     if wandb.run is not None:
                         wandb.log(rep_logs, step=self.steps)
 
-                actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
+                # actor_loss, alpha_loss = self._new_actor_alpha_loss(obs)
+                actor_loss, alpha_loss = self._actor_loss_kl_instate(
+                    obs,
+                    K=self.K,
+                    noise_std=self.noise_std,
+                    tau_w=1.0,
+                    use_mpo_prior=False,
+                    w_clip=100.0,
+                    eps_smooth=1e-8,
+                    entropy_bonus=True
+                )
 
                 self.optim_actor.zero_grad()
                 actor_loss.backward()
