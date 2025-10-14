@@ -7,7 +7,7 @@ import math
 import torch.nn.functional as F
 
 from dist_rl_fix.models.networks import DistanceTrunk, GaussianActor, TwinQ
-from dist_rl.utils import RolloutBuffer, differentiable_topk
+from dist_rl.utils import RolloutBuffer
 from dist_rl_fix.representations import recursive_nstep_cosine_loss_ema, BetaEMA
 from dist_rl_fix.utils import (RunningMeanStd,
                                polyak_update)
@@ -31,20 +31,23 @@ class SACDistanceAgentNew:
                  expl_sigma: float,
                  target_entropy_scale: float,
                  updates_per_step: int,
-                 kernel_adaptive_tau: bool,
+                 kernel_adaptive_tau: int,
                  rep_gamma_shape: float,
                  rep_lam: float,
                  rep_huber: float,
+                 normalize_obs: int,
                  alpha: Optional[float],
                  save_dir: str,
                  **kwargs):
 
         self.updates_per_step = updates_per_step
-        self.kernel_adaptive_tau = kernel_adaptive_tau
+        self.kernel_adaptive_tau = True if kernel_adaptive_tau != 0 else False
         self.target_entropy_scale = target_entropy_scale
 
         self.K = K  # for in-state Qhat
         self.noise_std = expl_sigma
+
+        self.normalize_obs = True if normalize_obs != 0 else False
 
         self.device = device
         self.env = gym.make(env_id)
@@ -142,6 +145,7 @@ class SACDistanceAgentNew:
         print("[Init] SACDistanceAgent setup complete")
         print(
             f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
+        print(f'Normalize obs: {self.normalize_obs}')
 
     @torch.no_grad()
     def _bank_add_env_action(self, a_env: torch.Tensor):
@@ -204,7 +208,11 @@ class SACDistanceAgentNew:
             while not (done or trunc):
                 ot = torch.as_tensor(o, device=self.device,
                                      dtype=torch.float32).unsqueeze(0)
-                otn = self.obs_rms.normalize(ot)
+                if self.normalize_obs:
+                    otn = self.obs_rms.normalize(ot)
+                else:
+                    otn = ot
+                    
                 a = self._sample_action(otn, eval_mode=True).clamp(-1, 1)
                 a_env = ((a + 1) / 2) * (self.high - self.low) + self.low
                 o, r, done, trunc, _ = self.eval_env.step(
@@ -230,7 +238,11 @@ class SACDistanceAgentNew:
     # ---------- critic / actor / rep losses ----------
     def _td_targets(self, r, d, next_obs):
         with torch.no_grad():
-            next_obs_n = self.obs_rms.normalize(next_obs)
+            if self.normalize_obs:
+                next_obs_n = self.obs_rms.normalize(next_obs)
+            else:
+                next_obs_n = next_obs
+                
             a2, logp2, _ = self.actor.sample(next_obs_n)
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
@@ -241,7 +253,10 @@ class SACDistanceAgentNew:
         return target
 
     def _q_loss(self, obs, act_env, r, next_obs, d):
-        obs_n = self.obs_rms.normalize(obs)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)
+        else:
+            obs_n = obs
         act = self._env_to_action(act_env)
         q1, q2 = self.qnet(obs_n, act)
         target = self._td_targets(r, d, next_obs)
@@ -250,72 +265,19 @@ class SACDistanceAgentNew:
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
 
     def _new_actor_alpha_loss(self, obs):
+     
+        # Qhat, logp = self._qhat_in_state(obs,
+        #                                  K=32,
+        #                                  noise_std=0.1,
+        #                                  softmax_temp=1.0,
+        #                                  eps=0.05)
 
-        instate = True  # choose in-state Qhat
-
-        if not instate:
-            obs_n = self.obs_rms.normalize(obs)
-
-            a, logp, _ = self.actor.sample(obs_n)
-
-            # sample candidates
-            obs_c, obs_c_next, act_env_c, ret_c, done_c = self.replay.get_batch(
-                self.kernel_cand)
-            obs_c_n = self.obs_rms.normalize(obs_c)
-            act_c = self._env_to_action(act_env_c)
-
-            # kernel similarities in rep space
-            z_i = F.normalize(self.rep_trunk(obs_n, a), p=2,
-                              dim=1)                 # (B,H)
-
-            with torch.no_grad():
-                z_c = F.normalize(
-                    self.rep_trunk_targ(obs_c_n, act_c), p=2, dim=1)  # (B_c,H)
-
-            S_full = z_i @ z_c.T                        # (B, B_c) cosine sim
-
-            # Compute per-sample k based on cosine similarity threshold
-            cos_sim_threshold = 0.85
-            num_above_threshold = (
-                S_full > cos_sim_threshold).sum(dim=1)  # [B]
-            # print(f'num_above_threshold: {num_above_threshold}')
-            k_per_sample = torch.clamp(
-                num_above_threshold, min=5, max=self.kernel_state_k)  # [B]
-            # print(f'k_per_sample: {k_per_sample}')
-
-            S_masked, top_vals, top_idx = differentiable_topk(
-                S_full, k_per_sample)
-
-            # take top_vals without infinite values
-            top_vals = top_vals[torch.isfinite(top_vals)]
-
-            # adaptive tau per row
-            # if self.kernel_adaptive_tau:
-            W = torch.softmax(S_masked, dim=1)
-
-            # targets: critics' Q rather than returns (much better bias)
-            with torch.no_grad():
-                qc1, qc2 = self.q_targ(obs_c_n, act_c)
-                qc = torch.min(qc1, qc2).unsqueeze(0)
-
-            # (B,1)
-            Qhat = (W.unsqueeze(-1) * qc).sum(dim=1)
-            # print(f'Qhat mean: {Qhat.mean().item()}')
-
-        # in-state Qhat
-        else:
-            # Qhat, logp = self._qhat_in_state(obs,
-            #                                  K=32,
-            #                                  noise_std=0.1,
-            #                                  softmax_temp=1.0,
-            #                                  eps=0.05)
-
-            # Normalized in-state Qhat
-            Qhat, logp = self._qhat_in_state_norm(obs,
-                                                  K=self.K,
-                                                  noise_std=self.noise_std,
-                                                  softmax_temp=1.0,
-                                                  eps=0.05)
+        # Normalized in-state Qhat
+        Qhat, logp = self._qhat_in_state_norm(obs,
+                                                K=self.K,
+                                                noise_std=self.noise_std,
+                                                softmax_temp=1.0,
+                                                eps=0.05)
 
         alpha = self.log_alpha.exp()
 
@@ -337,8 +299,12 @@ class SACDistanceAgentNew:
 
     def _rep_loss(self, obs, act_env, next_obs, done):
         # Use rep trunk and TARGET rep trunk (stop-grad on next)
-        obs_n = self.obs_rms.normalize(obs)
-        next_obs_n = self.obs_rms.normalize(next_obs)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)
+            next_obs_n = self.obs_rms.normalize(next_obs)
+        else:
+            obs_n = obs
+            next_obs_n = next_obs
 
         act = self._env_to_action(act_env)
         z = self.rep_trunk(obs_n, act)
@@ -346,7 +312,7 @@ class SACDistanceAgentNew:
         with torch.no_grad():  # stop-grad target
             a2, _, _ = self.actor.sample(next_obs_n)
             # add noise to a2
-            a2 += torch.randn_like(a2) * 0.2
+            a2 += torch.randn_like(a2) * self.noise_std # used 0.2
             a2 = a2.clamp(-1, 1)
             z_next = self.rep_trunk_targ(next_obs_n, a2)
 
@@ -366,7 +332,10 @@ class SACDistanceAgentNew:
     def _qhat_in_state(self, obs, K: int = 64, noise_std: float = 0.1,
                        softmax_temp: float = 1.0, eps: float = 0.05):
 
-        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        else:
+            obs_n = obs
         B = obs_n.shape[0]
         obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
 
@@ -400,7 +369,10 @@ class SACDistanceAgentNew:
     def _qhat_in_state_norm(self, obs, K: int = 64, noise_std: float = 0.1,
                             softmax_temp: float = 1.0, eps: float = 0.05):
 
-        obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        else:
+            obs_n = obs
         B = obs_n.shape[0]
         obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
 
@@ -719,7 +691,7 @@ class SACDistanceAgentNew:
         tau_sched = tau_min + 0.5 * \
             (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
 
-        if getattr(self, "kernel_adaptive_tau", False):
+        if self.kernel_adaptive_tau:
             row_std = S_rowwise.std(dim=1, keepdim=True).clamp(min=1e-4)
             tau_row = torch.full(
                 (B, 1), tau_sched, device=device) + row_std  # c=1.0
@@ -739,8 +711,12 @@ class SACDistanceAgentNew:
         while self.steps < self.total_steps:
             ot = torch.as_tensor(o, device=self.device,
                                  dtype=torch.float32).unsqueeze(0)
-            self.obs_rms.update(ot)
-            otn = self.obs_rms.normalize(ot)
+            
+            if self.normalize_obs:
+                self.obs_rms.update(ot)
+                otn = self.obs_rms.normalize(ot)
+            else:
+                otn = ot
 
             with torch.no_grad():
                 if self.steps < self.warmup_steps:

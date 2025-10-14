@@ -33,8 +33,8 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--env-id", type=str,
-                        default="ALE/Breakout-v5", help="Gym environment ID")
-                        # default="HalfCheetah-v5", help="Gym environment ID")
+                        # default="ALE/Breakout-v5", help="Gym environment ID")
+                        default="HalfCheetah-v5", help="Gym environment ID")
     parser.add_argument("--dataset", type=str, default="mujoco/halfcheetah/expert-v0",
                         help="Minari dataset name (e.g., mujoco/halfcheetah/expert-v0)")
     parser.add_argument("--max-dataset-episodes", type=int, default=None,
@@ -96,6 +96,9 @@ def main():
     parser.add_argument('--rep-huber', type=float, default=0.2)
     parser.add_argument('--rep-margin-scale', type=float, default=0.5)
     parser.add_argument('--rep-temp', type=float, default=1.0)
+
+    parser.add_argument('--normalize-obs', type=int, default=1,
+                        help='Whether to normalize observations (1=True, 0=False).')
 
     parser.add_argument('--kernel-temp', type=float, default=0.5)
     parser.add_argument('--kernel-cand', type=int, default=10)
