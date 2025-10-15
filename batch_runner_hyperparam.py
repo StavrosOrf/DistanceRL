@@ -60,7 +60,7 @@ def batch_runner():
     HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5'] #number of envs: 2
     
     F_ENVS = ['Walker2d-v5', 'Hopper-v5', 'Swimmer-v5', 'Reacher-v5', 'InvertedDoublePendulum-v5',
-              'InvertedPendulum-v5', 'Pusher-v5']
+              'InvertedPendulum-v5']
 
     continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
@@ -69,7 +69,7 @@ def batch_runner():
 
     lr_grid = [1e-3]  # [1e-3]
 
-    seed_grid = [42]
+    seed_grid = [42, 32]
 
     K_grid = [32, 64, 256]
     expl_sigma_grid = [0.2]
@@ -151,46 +151,46 @@ def batch_runner():
                                                 print(python_command)
 
                                                 command = '''#!/bin/sh
-    #!/bin/bash
-    #SBATCH --job-name="dist_rl"
-    ''' + \
-                                        f'#SBATCH --partition={partition}\n' + \
-                                        f'#SBATCH --time={job_hours}:00:00\n' + \
-                                        f'{batch_arg}' + \
-                                        '''
-    #SBATCH --ntasks=1
-    ''' + \
-                                        f'#SBATCH --cpus-per-task={cpu_cores}' + \
-                                        '''
-    ''' + \
-                                        f'#SBATCH --mem-per-cpu={memory_per_cpu}' + \
-                                        '''
-    #SBATCH --account=research-eemcs-ese
+#!/bin/bash
+#SBATCH --job-name="dist_rl"
+''' + \
+                                    f'#SBATCH --partition={partition}\n' + \
+                                    f'#SBATCH --time={job_hours}:00:00\n' + \
+                                    f'{batch_arg}' + \
+                                    '''
+#SBATCH --ntasks=1
+''' + \
+                                    f'#SBATCH --cpus-per-task={cpu_cores}' + \
+                                    '''
+''' + \
+                                    f'#SBATCH --mem-per-cpu={memory_per_cpu}' + \
+                                    '''
+#SBATCH --account=research-eemcs-ese
 
-    ''' + \
-                                        f'#SBATCH --output=./slurm_logs/{run_name}.out' + \
-                                        '''
-    ''' + \
-                                        f'#SBATCH --error=./slurm_logs/{run_name}.err' + \
-                                        '''
+''' + \
+                                    f'#SBATCH --output=./slurm_logs/{run_name}.out' + \
+                                    '''
+''' + \
+                                    f'#SBATCH --error=./slurm_logs/{run_name}.err' + \
+                                    '''
 
-    module load 2024r1 openmpi miniconda3 py-pip
+module load 2024r1 openmpi miniconda3 py-pip
 
-    # Set conda env:
+# Set conda env:
 
-    unset CONDA_SHLVL
-    source "$(conda info --base)/etc/profile.d/conda.sh"
+unset CONDA_SHLVL
+source "$(conda info --base)/etc/profile.d/conda.sh"
 
-    conda activate dt3
-    previous=$(/usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' --format='csv' | /usr/bin/tail -n '+2')
+conda activate dt3
+previous=$(/usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' --format='csv' | /usr/bin/tail -n '+2')
 
-    ''' + 'srun ' + python_command + \
-                                        '''
+''' + 'srun ' + python_command + \
+                                    '''
 
-    /usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' --format='csv' | /usr/bin/grep -v -F "$previous"
+/usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utilization,max_memory_usage,time' --format='csv' | /usr/bin/grep -v -F "$previous"
 
-    conda deactivate
-    '''
+conda deactivate
+'''
 
                                                 with open('run_tmp.sh', 'w') as f:
                                                     f.write(command)
@@ -198,23 +198,10 @@ def batch_runner():
                                                 with open(f'./slurm_logs/{run_name}.sh', 'w') as f:
                                                     f.write(command)
 
-                                                # os.system('sbatch run_tmp.sh')
+                                                os.system('sbatch run_tmp.sh')
 
 
 if __name__ == "__main__":
     batch_runner()
     
     
-    
-
-@dataclass
-class DistRLConfig:
-
-    halfcheetah = {
-        "device": "cuda",
-        "eval_episodes": 10,
-        "v_gamma": 2.0,
-        "batch_size": 256,
-        
-        
-    }
