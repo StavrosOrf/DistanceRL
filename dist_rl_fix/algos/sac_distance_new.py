@@ -36,6 +36,7 @@ class SACDistanceAgentNew:
                  rep_lam: float,
                  rep_huber: float,
                  normalize_obs: int,
+                 warmup_steps: int,
                  alpha: Optional[float],
                  save_dir: str,
                  **kwargs):
@@ -118,24 +119,10 @@ class SACDistanceAgentNew:
         self.rep_huber = rep_huber
         self.beta_ema = BetaEMA(decay=0.995)
 
-        # --- Action bank (global proposal reservoir) ---
-        self.bank_max = 50_000
-        self.bank_ptr = 0
-        self.bank_filled = 0
-        self.action_bank = torch.zeros(
-            self.bank_max, self.act_dim, device=self.device)
-
-        # fixed knobs that rarely need touching
-        self._bank_jitter = 0.10   # small jitter added when sampling from the bank
-        # fraction of proposals that are global (bank)
-        self._rho_global = 0.20
-        self._cem_elites = 8      # elites per state for CEM refinement
-        self._cem_new = 16     # new CEM samples per state
-
         # self.alpha_min = 0.02                    # floor to keep some exploration
         self.max_grad_norm = 5
         self.steps = 0
-        self.warmup_steps = 5000
+        self.warmup_steps = warmup_steps
         self.best_eval = -float('inf')
         self._printed_warmup_notice = False
 
@@ -146,36 +133,6 @@ class SACDistanceAgentNew:
         print(
             f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
         print(f'Normalize obs: {self.normalize_obs}')
-
-    @torch.no_grad()
-    def _bank_add_env_action(self, a_env: torch.Tensor):
-        """
-        Add an env-space action (B, act_dim) into the global bank (stored in [-1,1]).
-        """
-        if a_env.dim() == 1:
-            a_env = a_env.unsqueeze(0)
-        # (B, A) in [-1,1]
-        a_norm = self._env_to_action(a_env)
-        n = a_norm.size(0)
-        idx = (torch.arange(n, device=self.device) +
-               self.bank_ptr) % self.bank_max
-        self.action_bank[idx] = a_norm
-        self.bank_ptr = int((self.bank_ptr + n) % self.bank_max)
-        self.bank_filled = min(self.bank_max, self.bank_filled + n)
-
-    @torch.no_grad()
-    def _bank_sample(self, B: int, M: int) -> torch.Tensor:
-        """
-        Sample (B, M, A) actions from the global bank with small jitter; if empty, fallback to uniform.
-        """
-        if self.bank_filled == 0:
-            # fallback: wide uniform in [-1,1]
-            return (2.0 * torch.rand(B, M, self.act_dim, device=self.device) - 1.0).clamp(-1, 1)
-        idx = torch.randint(0, self.bank_filled, (B, M), device=self.device)
-        a = self.action_bank[idx]  # (B, M, A)
-        if self._bank_jitter > 0:
-            a = (a + self._bank_jitter * torch.randn_like(a)).clamp(-1, 1)
-        return a
 
     @property
     def alpha(self):
@@ -314,6 +271,7 @@ class SACDistanceAgentNew:
             # add noise to a2
             a2 += torch.randn_like(a2) * self.noise_std # used 0.2
             a2 = a2.clamp(-1, 1)
+            a2 = ((a2 + 1) / 2) * (self.high - self.low) + self.low
             z_next = self.rep_trunk_targ(next_obs_n, a2)
 
             q1t, q2t = self.q_targ(obs_n, act)
@@ -344,6 +302,7 @@ class SACDistanceAgentNew:
             a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
             if noise_std > 0:
                 a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+                a_k = ((a_k + 1) / 2) * (self.high - self.low) + self.low
 
             z_k = F.normalize(self.rep_trunk_targ(
                 obs_rep, a_k), p=2, dim=1)  # (B*K,H)
@@ -381,6 +340,7 @@ class SACDistanceAgentNew:
             a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
             if noise_std > 0:
                 a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+                a_k = ((a_k + 1) / 2) * (self.high - self.low) + self.low
 
             z_k = F.normalize(self.rep_trunk_targ(
                 obs_rep, a_k), p=2, dim=1)  # (B*K,H)
@@ -464,6 +424,8 @@ class SACDistanceAgentNew:
             a0, _, _ = self.actor.sample(obs_rep0)                # (B*K,A)
             if noise_std > 0:
                 a0 = (a0 + noise_std * torch.randn_like(a0)).clamp(-1, 1)
+                a0 = ((a0 + 1) / 2) * (self.high - self.low) + self.low
+                
             A0 = a0.view(B, K, self.act_dim)                      # (B,K,A)
             K0 = K
 
@@ -728,9 +690,7 @@ class SACDistanceAgentNew:
 
             o2, r, done, trunc, _ = self.env.step(a_env)
             self.replay.add(o, o2, a_env, r, done or trunc)
-            self._bank_add_env_action(torch.as_tensor(
-                a_env, device=self.device, dtype=torch.float32))
-
+            
             ep_r += r
             ep_len += 1
             self.steps += 1

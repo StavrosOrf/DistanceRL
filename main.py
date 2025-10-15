@@ -108,7 +108,7 @@ def main():
 
     parser.add_argument("--aug", action="store_true")
     parser.add_argument("--no-aug", action="store_false", dest="aug")
-    parser.add_argument("--warmup_steps", type=int, default=50_000)
+    parser.add_argument("--warmup_steps", type=int, default=5_000)
     parser.add_argument("--use_impala", action="store_true", default=True,
                         help="If true, uses Impala CNN for image-based observations.")
     parser.add_argument("--no-impala", action="store_false", dest="use_impala")
@@ -234,8 +234,7 @@ def main():
 
     elif args.algo == "DistAgent" and args.env_id in continuous_envs:
         set_seed(args.seed)
-
-        setattr(args, 'rep_gamma_shape', args.v_gamma)  # for representation loss        
+                
         setattr(args, 'alpha', args.alpha)  # for representation loss        
         setattr(args, 'save_dir', args.model_save_path)
         
@@ -250,9 +249,8 @@ def main():
         setattr(args, 'alpha', args.alpha)  # for representation loss
         setattr(args, 'save_dir', args.model_save_path)
 
-        # set eval_freq to 50000
-        setattr(args, 'eval_freq', 50000)
-        setattr(args, 'warmup_steps', 50000)
+        # set eval_freq to 50000        
+        setattr(args, 'warmup_steps', 5000)
 
         agent = SACDistanceAtari(**args.__dict__)
         print(f'Running {args.algo} with kernel policy updates.')
