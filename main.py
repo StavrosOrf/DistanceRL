@@ -12,11 +12,12 @@ from dist_rl.utils import set_seed
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
-               'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5'] #number of envs: 9
+               'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']  # number of envs: 9
 BOX2D_ENVS = ['LunarLanderContinuous-v3',
-              'MountainCarContinuous-v0', 'Pendulum-v1'] #number of envs: 3
+              'MountainCarContinuous-v0', 'Pendulum-v1']  # number of envs: 3
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -35,28 +36,27 @@ def main():
     parser.add_argument("--project_name", type=str, default="DistRL ")
     parser.add_argument("--log_to_wandb", action="store_true", default=False,
                         help="If true, logs will be sent to wandb.")
-    
-                        
+
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistAgent")    
+    parser.add_argument("--algo", type=str, default="tqc") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
     parser.add_argument("--K", type=int, default=16)
     parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument('--warmup-steps', type=int, default=5000,
-                        help='Number of warmup steps for learning rate scheduling.')                        
+                        help='Number of warmup steps for learning rate scheduling.')
     parser.add_argument("--batch-size", type=int, default=5)
     parser.add_argument("--buffer-size", type=int, default=1_000_000)
     parser.add_argument("--expl-sigma", type=float, default=0.3)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--hidden-size", type=int, default=16)
     parser.add_argument("--eval-episodes", type=int, default=2)
-    parser.add_argument("--eval-freq", type=int, default=5000)    
+    parser.add_argument("--eval-freq", type=int, default=5000)
     parser.add_argument('--alpha', type=float, default=None,
                         help='If None, autotune alpha.')
     parser.add_argument('--gamma', type=float, default=0.99)
     parser.add_argument('--tau', type=float, default=0.005)
-    
+
     # Representation Loss args
     parser.add_argument('--rep-gamma-shape', type=float, default=0.5)
     parser.add_argument('--rep-lam', type=float, default=0.5)
@@ -73,7 +73,7 @@ def main():
     parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
-    
+
     args = parser.parse_args()
 
     # check if cuda is available
@@ -84,7 +84,7 @@ def main():
     set_seed(args.seed)
 
     if args.algo in SB3_ALGOS:
-        group_name = args.group_name + args.env_id #+ "_SB3"
+        group_name = args.group_name + args.env_id  # + "_SB3"
         args.log_to_wandb = True  # always log sb3 runs to wandb
         exp_prefix = args.algo + "_SB3_seed=" + \
             str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")
@@ -111,19 +111,17 @@ def main():
         if not args.lightweight_wandb:
             wandb.run.log_code(".")
 
-
     print("="*65)
     print(
         f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
 
     if args.algo == "DistAgent" and args.env_id in continuous_envs:
-        
-                    
+
         agent = DistAgent(**args.__dict__)
 
         print(f'Running {args.algo} with kernel policy updates.')
         agent.train()
-    
+
     else:
         agent = train_sb3_agent(**args.__dict__)
 

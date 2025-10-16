@@ -8,7 +8,31 @@ srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --q
 '''
 import os
 import random
-from dist_rl_fix.config import DistRLConfig
+from dist_rl.config import DistRLConfig
+
+steps_per_env = {
+    'HalfCheetah-v5': 5_000_000,
+    'Ant-v5': 5_000_000,
+    'Hopper-v5': 3_000_000,
+    'Humanoid-v5': 10_000_000,
+    'InvertedDoublePendulum-v5': 500_000,
+    'InvertedPendulum-v5': 500_000,
+    'Reacher-v5': 500_000,
+    'Swimmer-v5': 1_000_000,
+    'Walker2d-v5': 5_000_000,
+}
+
+hours_per_env_sb3 = {
+    'HalfCheetah-v5': 20,
+    'Ant-v5': 20,
+    'Hopper-v5': 12,
+    'Humanoid-v5': 30,
+    'InvertedDoublePendulum-v5': 6,
+    'InvertedPendulum-v5': 6,
+    'Reacher-v5': 3,
+    'Swimmer-v5': 5,
+    'Walker2d-v5': 12,
+}
 
 
 def batch_runner():
@@ -16,8 +40,8 @@ def batch_runner():
 
     partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
     algo = ['DistAgent']
-    group_name = "Ablation_"
-    project_name = "DistRL_Rep"  # DistRL_Rep
+    group_name = "SB3"
+    project_name = "DistRL_Exps"  # DistRL_Rep
 
     # resource configuration
     device = 'cuda' if partition != 'compute' else 'cpu'
@@ -30,7 +54,7 @@ def batch_runner():
     SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
     MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                    'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']  # number of envs: 9
-    #ENVS to try 
+    # ENVS to try
     F_ENVS = ['Walker2d-v5', 'Hopper-v5', 'Swimmer-v5', 'Reacher-v5', 'InvertedDoublePendulum-v5',
               'InvertedPendulum-v5']
     BOX2D_ENVS = ['LunarLanderContinuous-v3',
@@ -38,21 +62,17 @@ def batch_runner():
     CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']  # number of envs: 2
 
     HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5',
-                        'HalfCheetah-v5'] 
-    
+                        'HalfCheetah-v5']
 
-
-    continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
-
-    seed_grid = [42, 32, 22, 12, 2]
-    training_steps = 1_000_000
+    seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in F_ENVS:
-        for algo in ['DistAgent']:
+    for env in MUJOCO_ENVS:
+        for algo in SB3_ALGOS:
+        # for algo in ['DistAgent']:
             for seed in seed_grid:
 
                 if algo == 'DistAgent':
@@ -60,43 +80,46 @@ def batch_runner():
                         '-')[0].lower(), None)
 
                 if algo in SB3_ALGOS:
-                    job_hours = 5
-                    if env in ['Humanoid-v5']:
-                        job_hours = 7
+                    job_hours = hours_per_env_sb3[env]
+                else:
+                    job_hours = int(hours_per_env_sb3[env]*1.3)
+                    if job_hours > 45:
+                        job_hours = 45
 
-                run_id = (
-                    f"{algo}_K{g['K']}_bs{g['batch_size']}_lr{g['lr']}_tes{g['target_entropy_scale']}_es{g['expl_sigma']}")
-                # add the other grid variables to the run_id
-                run_id += (
-                    f"_rgs{g['rep_gamma_shape']}_kat{g['kernel_adaptive_tau']}_norm{g['normalize_obs']}")
-                run_id += f"_seed{seed}"
-                run_name = f"{run_id}_{random.randint(0, 99999)}"
+                training_steps = steps_per_env[env]
+
+                run_name = f"{algo}_seed{seed}"
                 print(f"Submitting {run_name}")
 
                 python_command = 'python main.py' + \
                     f' --env-id {env}' + \
                     f' --algo {algo}' + \
                     f' --device {device}' + \
-                    f' --batch-size {g["batch_size"]}' + \
-                    f' --K {g["K"]}' + \
-                    f' --lr {g["lr"]}' + \
-                    f' --hidden-size {g["hidden_size"]}' + \
+                        f' --seed {seed}' + \
+                        f' --exp-prefix {run_name}' + \
+                        f' --group-name {group_name}' + \
                     f' --total-steps {training_steps}' + \
-                    f' --buffer-size {g["buffer_size"]}' + \
-                    f' --seed {seed}' + \
-                    f' --exp-prefix {run_name}' + \
-                    f' --group-name {group_name}' + \
-                    f' --eval-episodes {g["eval_episodes"]}' + \
-                    f' --eval-freq {g["eval_freq"]}' + \
-                    f' --expl-sigma {g["expl_sigma"]}' + \
-                    f' --normalize-obs {g["normalize_obs"]}' + \
-                    f' --updates-per-step {g["updates_per_step"]}' + \
-                    f' --rep-gamma-shape {g["rep_gamma_shape"]}' + \
-                    f' --project_name {project_name}' + \
-                    f' --target-entropy-scale {g["target_entropy_scale"]}' + \
-                    f' --kernel-adaptive-tau {g["kernel_adaptive_tau"]}' + \
+                        f' --project_name {project_name}' + \
                     ' --log_to_wandb' + \
                     ' --lightweight_wandb'
+
+                if algo == 'DistAgent':
+                    extra_command = f' --batch-size {g["batch_size"]}' + \
+                        f' --K {g["K"]}' + \
+                        f' --lr {g["lr"]}' + \
+                        f' --hidden-size {g["hidden_size"]}' + \
+                        f' --buffer-size {g["buffer_size"]}' + \
+                        f' --eval-episodes {g["eval_episodes"]}' + \
+                        f' --eval-freq {g["eval_freq"]}' + \
+                        f' --expl-sigma {g["expl_sigma"]}' + \
+                        f' --normalize-obs {g["normalize_obs"]}' + \
+                        f' --updates-per-step {g["updates_per_step"]}' + \
+                        f' --rep-gamma-shape {g["rep_gamma_shape"]}' + \
+                        f' --target-entropy-scale {g["target_entropy_scale"]}' + \
+                        f' --kernel-adaptive-tau {g["kernel_adaptive_tau"]}'
+                        
+                    python_command += extra_command
+                    
 
                 print(python_command + '\n')
 

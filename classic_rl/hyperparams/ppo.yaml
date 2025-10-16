@@ -1,4 +1,3 @@
-# ppo.yaml — SB3-style presets (on-policy). Use VecNormalize (obs-only) on MuJoCo.
 Ant-v5:
   total_steps: 1000000
   n_envs: 1
@@ -12,11 +11,17 @@ Ant-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 20000
+  eval_interval: 10000
   eval_episodes: 10
 
 HalfCheetah-v5:
@@ -24,41 +29,51 @@ HalfCheetah-v5:
   n_envs: 1
   n_steps: 2048
   batch_size: 64
-  n_epochs: 20
-  gamma: 0.98
-  gae_lambda: 0.92
-  clip_range: 0.1
-  learning_rate: 0.0002
-  ent_coef: 0.0004
-  vf_coef: 0.58
-  max_grad_norm: 0.8
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  learning_rate: 0.0003
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 20000
+  eval_interval: 10000
   eval_episodes: 10
-
 Hopper-v5:
   total_steps: 1000000
   n_envs: 1
-  n_steps: 512
-  batch_size: 32
-  n_epochs: 5
-  gamma: 0.999
-  gae_lambda: 0.99
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
   clip_range: 0.2
-  learning_rate: 0.0001
-  ent_coef: 0.0023
-  vf_coef: 0.836
-  max_grad_norm: 0.7
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  learning_rate: 0.0003
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 20000
+  eval_interval: 10000
   eval_episodes: 10
-
 Humanoid-v5:
   total_steps: 3000000
   n_envs: 1
@@ -72,17 +87,22 @@ Humanoid-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 50000
+  eval_interval: 10000
   eval_episodes: 10
-
 InvertedDoublePendulum-v5:
-  total_steps: 500000
+  total_steps: 1000000
   n_envs: 1
-  n_steps: 1024
+  n_steps: 2048
   batch_size: 64
   n_epochs: 10
   gamma: 0.99
@@ -92,17 +112,22 @@ InvertedDoublePendulum-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [64,64], vf: [64,64]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
   eval_interval: 10000
   eval_episodes: 10
-
 InvertedPendulum-v5:
-  total_steps: 300000
+  total_steps: 1000000
   n_envs: 1
-  n_steps: 1024
+  n_steps: 2048
   batch_size: 64
   n_epochs: 10
   gamma: 0.99
@@ -112,33 +137,43 @@ InvertedPendulum-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [64,64], vf: [64,64]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
   eval_interval: 10000
   eval_episodes: 10
-
 Reacher-v5:
-  total_steps: 500000
+  total_steps: 1000000
   n_envs: 1
-  n_steps: 1024
+  n_steps: 2048
   batch_size: 64
   n_epochs: 10
-  gamma: 0.98
+  gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
   learning_rate: 0.0003
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [64,64], vf: [64,64]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
   eval_interval: 10000
   eval_episodes: 10
-
 Swimmer-v5:
   total_steps: 1000000
   n_envs: 1
@@ -152,13 +187,18 @@ Swimmer-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 20000
+  eval_interval: 10000
   eval_episodes: 10
-
 Walker2d-v5:
   total_steps: 1000000
   n_envs: 1
@@ -172,19 +212,24 @@ Walker2d-v5:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: true
   normalize_reward: false
-  eval_interval: 20000
+  eval_interval: 10000
   eval_episodes: 10
-
 LunarLanderContinuous-v3:
   total_steps: 1000000
-  n_envs: 8
-  n_steps: 32
-  batch_size: 256
-  n_epochs: 20
+  n_envs: 1
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
   gamma: 0.99
   gae_lambda: 0.95
   clip_range: 0.2
@@ -192,35 +237,20 @@ LunarLanderContinuous-v3:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [256,256], vf: [256,256]}
-  normalize_obs: false
-  normalize_reward: false
-  eval_interval: 20000
-  eval_episodes: 10
-
-MountainCarContinuous-v0:
-  total_steps: 300000
-  n_envs: 1
-  n_steps: 2048
-  batch_size: 64
-  n_epochs: 10
-  gamma: 0.999
-  gae_lambda: 0.95
-  clip_range: 0.2
-  learning_rate: 0.0003
-  ent_coef: 0.0
-  vf_coef: 0.5
-  max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [64,64], vf: [64,64]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 256
+      - 256
+    vf:
+      - 256
+      - 256
   normalize_obs: false
   normalize_reward: false
   eval_interval: 10000
   eval_episodes: 10
-
-Pendulum-v1:
-  total_steps: 300000
+MountainCarContinuous-v0:
+  total_steps: 1000000
   n_envs: 1
   n_steps: 2048
   batch_size: 64
@@ -232,8 +262,39 @@ Pendulum-v1:
   ent_coef: 0.0
   vf_coef: 0.5
   max_grad_norm: 0.5
-  policy: "MlpPolicy"
-  net_arch: {pi: [64,64], vf: [64,64]}
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 64
+      - 64
+    vf:
+      - 64
+      - 64
+  normalize_obs: false
+  normalize_reward: false
+  eval_interval: 10000
+  eval_episodes: 10
+Pendulum-v1:
+  total_steps: 1000000
+  n_envs: 1
+  n_steps: 2048
+  batch_size: 64
+  n_epochs: 10
+  gamma: 0.99
+  gae_lambda: 0.95
+  clip_range: 0.2
+  learning_rate: 0.0003
+  ent_coef: 0.0
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  policy: MlpPolicy
+  net_arch:
+    pi:
+      - 64
+      - 64
+    vf:
+      - 64
+      - 64
   normalize_obs: false
   normalize_reward: false
   eval_interval: 10000
