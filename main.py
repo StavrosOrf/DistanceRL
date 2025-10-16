@@ -84,7 +84,7 @@ def main():
     set_seed(args.seed)
 
     if args.algo in SB3_ALGOS:
-        group_name = args.group_name + args.env_id  # + "_SB3"
+        group_name = args.group_name + args.env_id
         args.log_to_wandb = True  # always log sb3 runs to wandb
         exp_prefix = args.algo + "_SB3_seed=" + \
             str(args.seed) + "_" + datetime.now().strftime("%m%d_%H%M%S")

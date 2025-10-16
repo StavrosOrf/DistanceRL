@@ -40,12 +40,11 @@ def batch_runner():
 
     partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
     algo = ['DistAgent']
-    group_name = "SB3"
+    group_name = "Results"
     project_name = "DistRL_Exps"  # DistRL_Rep
 
     # resource configuration
     device = 'cuda' if partition != 'compute' else 'cpu'
-    job_hours = 6 if partition == 'gpu-a100-small' else 15
 
     cpu_cores = 1 if partition != 'compute' else 2
     memory_per_cpu = '5300' if partition != 'compute' else '3800'
@@ -72,7 +71,7 @@ def batch_runner():
 
     for env in MUJOCO_ENVS:
         for algo in SB3_ALGOS:
-        # for algo in ['DistAgent']:
+            # for algo in ['DistAgent']:
             for seed in seed_grid:
 
                 if algo == 'DistAgent':
@@ -95,11 +94,11 @@ def batch_runner():
                     f' --env-id {env}' + \
                     f' --algo {algo}' + \
                     f' --device {device}' + \
-                        f' --seed {seed}' + \
-                        f' --exp-prefix {run_name}' + \
-                        f' --group-name {group_name}' + \
+                    f' --seed {seed}' + \
+                    f' --exp-prefix {run_name}' + \
+                    f' --group-name {group_name}' + \
                     f' --total-steps {training_steps}' + \
-                        f' --project_name {project_name}' + \
+                    f' --project_name {project_name}' + \
                     ' --log_to_wandb' + \
                     ' --lightweight_wandb'
 
@@ -117,9 +116,8 @@ def batch_runner():
                         f' --rep-gamma-shape {g["rep_gamma_shape"]}' + \
                         f' --target-entropy-scale {g["target_entropy_scale"]}' + \
                         f' --kernel-adaptive-tau {g["kernel_adaptive_tau"]}'
-                        
+
                     python_command += extra_command
-                    
 
                 print(python_command + '\n')
 
