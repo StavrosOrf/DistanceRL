@@ -32,7 +32,7 @@ def batch_runner():
                    'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']  # number of envs: 9
     #ENVS to try 
     F_ENVS = ['Walker2d-v5', 'Hopper-v5', 'Swimmer-v5', 'Reacher-v5', 'InvertedDoublePendulum-v5',
-              'InvertedPendulum-v5', 'Pusher-v5']
+              'InvertedPendulum-v5']
     BOX2D_ENVS = ['LunarLanderContinuous-v3',
                   'MountainCarContinuous-v0', 'Pendulum-v1']  # number of envs: 3
     CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']  # number of envs: 2
@@ -51,7 +51,7 @@ def batch_runner():
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in HARD_MUJOCO_ENVS:
+    for env in F_ENVS:
         for algo in ['DistAgent']:
             for seed in seed_grid:
 

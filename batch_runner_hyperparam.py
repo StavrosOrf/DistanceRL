@@ -47,7 +47,6 @@ def batch_runner():
     kernel_temp_default = 0.5
     kernel_cand_default = 2048
     kernel_state_k_default = 64
-    kernel_adaptive_tau_default = 1
     kernel_aux_weight = 0.1
 
     SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]

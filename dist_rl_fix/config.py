@@ -57,3 +57,111 @@ class DistRLConfig:
         "warmup_steps": 5000,
         "updates_per_step": 1,
     }
+    
+    walker2d = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 64,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
+
+    hopper = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 128,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
+    
+    swimmer = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 128,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
+    
+    reacher = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 128,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
+    
+    invertedpendulum = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 64,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
+    
+    inverteddoublependulum = {
+        "total_steps": 1_000_000,
+        "buffer_size": 1_000_000,
+        "K": 32,
+        "batch_size": 256,
+        "lr": 1e-3,
+        "target_entropy_scale": 1,
+        "expl_sigma": 0.2,
+        "hidden_size": 256,
+        "rep_gamma_shape": 2.0,
+        "kernel_adaptive_tau": 1, # 1 for True, 0 for False
+        "normalize_obs": 1, # 1 for True, 0 for False
+        "eval_episodes": 10,
+        "eval_freq": 5000,
+        "warmup_steps": 5000,
+        "updates_per_step": 1,
+    }
