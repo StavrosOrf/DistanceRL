@@ -1,4 +1,3 @@
-# dist_rl_fix/representations.py
 from typing import Tuple
 import torch
 import torch.nn.functional as F

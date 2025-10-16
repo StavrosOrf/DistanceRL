@@ -6,7 +6,7 @@ srun --mpi=pmix --job-name=interactive-gpu --partition=gpu-a100-small --gpus-per
 srun --mpi=pmix --job-name=interactive-gpu --partition=gpu-a100 --gpus-per-task=1 --qos=normal --time=01:00:00 --mem-per-cpu=5500 --cpus-per-task=1 --ntasks=1 --pty /bin/bash -il
 srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --qos=normal --time=01:00:00 --mem-per-cpu=3800 --ntasks=1 --pty /bin/bash -il
 '''
-from dataclasses import dataclass
+
 import os
 import random
 
@@ -117,8 +117,6 @@ def batch_runner():
                                                     f' --device {device}' + \
                                                     f' --batch-size {batch_size}' + \
                                                     f' --K {K}' + \
-                                                    f' --v_gamma {v_gamma}' + \
-                                                    f' --top-k {top_k_default}' + \
                                                     f' --lr {lr}' + \
                                                     f' --hidden-size {hidden_size_default}' + \
                                                     f' --total-steps {total_steps_default}' + \
@@ -128,9 +126,6 @@ def batch_runner():
                                                     f' --group-name {group_name}' + \
                                                     f' --eval-episodes {eval_episodes_default}' + \
                                                     f' --eval-freq {eval_freq_default}' + \
-                                                    f' --policy-training-start {policy_training_start_default}' + \
-                                                    f' --val-training-start {val_training_start_default}' + \
-                                                    f' --comp-samples {comp_samples_default}' + \
                                                     f' --noise-type {noise_type_default}' + \
                                                     f' --expl-sigma {expl_sigma}' + \
                                                     f' --normalize-obs {normalize_obs}' + \
@@ -138,11 +133,6 @@ def batch_runner():
                                                     f' --rep-gamma-shape {rep_gamma_shape}' + \
                                                     f' --project_name {project_name}' + \
                                                     f' --target-entropy-scale {target_entropy_scale}' + \
-                                                    f' --alpha-cql {alpha_cql_default}' + \
-                                                    f' --kernel-aux-weight {kernel_aux_weight}' + \
-                                                    f' --kernel-temp {kernel_temp_default}' + \
-                                                    f' --kernel-cand {kernel_cand_default}' + \
-                                                    f' --kernel-state-k {kernel_state_k_default}' + \
                                                     f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
                                                     ' --log_to_wandb' + \
                                                     ' --lightweight_wandb'

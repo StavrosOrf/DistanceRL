@@ -1,4 +1,3 @@
-# dist_rl_fix/algos/sac_distance.py  (updated)
 from typing import Optional
 import gymnasium as gym
 import torch
@@ -6,59 +5,14 @@ import wandb
 import math
 import torch.nn.functional as F
 
-from dist_rl_fix.models.networks import DistanceTrunk, GaussianActor, TwinQ
-from dist_rl.utils import RolloutBuffer, differentiable_topk
-from dist_rl_fix.representations import recursive_nstep_cosine_loss_ema, BetaEMA
-from dist_rl_fix.utils import (RunningMeanStd,
+from dist_rl.models import DistanceTrunk, GaussianActor, TwinQ
+from dist_rl.utils import RolloutBuffer
+from dist_rl.representations import recursive_nstep_cosine_loss_ema, BetaEMA
+from dist_rl.utils import (RunningMeanStd,
                                polyak_update)
 
-import math
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-
-class StateCond(nn.Module):
-    def __init__(self, obs_dim: int, out_dim: int):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.LayerNorm(obs_dim),
-            nn.Linear(obs_dim, 2*out_dim),
-            nn.ReLU(inplace=True),
-            nn.Linear(2*out_dim, out_dim)
-        )
-
-    def forward(self, obs):  # (B,D) -> (B,out_dim)
-        return self.net(obs)
-
-
-class LatentDenoiser(nn.Module):
-    """
-    g_psi(s_emb, z_noisy) -> z_hat  (both on the unit sphere)
-    """
-
-    def __init__(self, z_dim: int, s_dim: int, hidden: int = 2*256):
-        super().__init__()
-        in_dim = z_dim + (s_dim if s_dim > 0 else 0)
-        self.net = nn.Sequential(
-            nn.Linear(in_dim, hidden), nn.ReLU(inplace=True),
-            nn.Linear(hidden, hidden), nn.ReLU(inplace=True),
-            nn.Linear(hidden, z_dim)
-        )
-
-    def forward(self, z_noisy, s_emb=None):
-        if s_emb is not None:
-            if s_emb.dim() == 2 and z_noisy.dim() == 3:
-                s_emb = s_emb.unsqueeze(1).expand(
-                    z_noisy.size(0), z_noisy.size(1), s_emb.size(-1))
-            x = torch.cat([z_noisy, s_emb], dim=-1)
-        else:
-            x = z_noisy
-        z = self.net(x)
-        return F.normalize(z, p=2, dim=-1)
-
-
-class SACDistanceDiffusionAgent:
+class DistAgent:
     def __init__(self,
                  env_id: str,
                  seed: int,
@@ -74,33 +28,26 @@ class SACDistanceDiffusionAgent:
                  lr: float,
                  K: int,
                  expl_sigma: float,
-                 updates_per_step: int,
-                 kernel_aux_weight: float,
-                 kernel_temp: float,
-                 kernel_cand: int,
-                 kernel_state_k: int,
-                 kernel_adaptive_tau: bool,
                  target_entropy_scale: float,
-                 rep_loss_weight: float,
+                 updates_per_step: int,
+                 kernel_adaptive_tau: int,
                  rep_gamma_shape: float,
                  rep_lam: float,
                  rep_huber: float,
+                 normalize_obs: int,
+                 warmup_steps: int,
                  alpha: Optional[float],
                  save_dir: str,
                  **kwargs):
 
-        # === extra knobs (safe defaults) ===
-        self.target_entropy_scale = target_entropy_scale
         self.updates_per_step = updates_per_step
-        # optional kernel auxiliary to actor (improves early training)
-        self.kernel_aux_weight = kernel_aux_weight
-        self.kernel_temp = kernel_temp
-        self.kernel_cand = kernel_cand
-        self.kernel_state_k = kernel_state_k
-        self.kernel_adaptive_tau = kernel_adaptive_tau
+        self.kernel_adaptive_tau = True if kernel_adaptive_tau != 0 else False
+        self.target_entropy_scale = target_entropy_scale
 
         self.K = K  # for in-state Qhat
         self.noise_std = expl_sigma
+
+        self.normalize_obs = True if normalize_obs != 0 else False
 
         self.device = device
         self.env = gym.make(env_id)
@@ -143,31 +90,6 @@ class SACDistanceDiffusionAgent:
             self.obs_dim, self.act_dim, hidden=hidden_size).to(self.device)
         self.rep_trunk_targ.load_state_dict(self.rep_trunk.state_dict())
 
-        # ---- Infer latent dim H once (probe rep_trunk) ----
-        with torch.no_grad():
-            _o = torch.zeros(1, self.obs_dim, device=self.device)
-            _a = torch.zeros(1, self.act_dim, device=self.device)
-            _z = self.rep_trunk(_o, _a)
-            self.z_dim = int(_z.shape[1])
-
-        # ---- Denoiser + conditioner ----
-        self.s_cond_dim = min(64, max(16, self.obs_dim // 2))  # small, robust
-        self.state_cond = StateCond(
-            self.obs_dim, self.s_cond_dim).to(self.device)
-        self.denoiser = LatentDenoiser(
-            self.z_dim, self.s_cond_dim, hidden=2*hidden_size).to(self.device)
-
-        self.optim_dnsr = torch.optim.Adam(
-            list(self.denoiser.parameters()) +
-            list(self.state_cond.parameters()),
-            lr=3e-4
-        )
-        self.denoiser_sigma = expl_sigma  # latent noise std (fixed, robust)
-        self.denoiser_tau_q = 1.0    # temperature for Q-weights to train g_psi
-        # denoiser updates per learner step (cheap)
-        self.denoiser_steps = 1
-        self.max_dnsr_grad_norm = 5.0
-
         # === Optimizers ===
         self.optim_actor = torch.optim.Adam(
             self.actor.parameters(), lr=3e-4)
@@ -191,7 +113,6 @@ class SACDistanceDiffusionAgent:
         self.obs_rms = RunningMeanStd(self.obs_dim, device=self.device)
 
         # Representation loss
-        self.rep_loss_weight = rep_loss_weight
         self.rep_gamma_shape = rep_gamma_shape
         self.rep_lam = rep_lam
         self.rep_huber = rep_huber
@@ -200,7 +121,7 @@ class SACDistanceDiffusionAgent:
         # self.alpha_min = 0.02                    # floor to keep some exploration
         self.max_grad_norm = 5
         self.steps = 0
-        self.warmup_steps = 5000
+        self.warmup_steps = warmup_steps
         self.best_eval = -float('inf')
         self._printed_warmup_notice = False
 
@@ -209,10 +130,8 @@ class SACDistanceDiffusionAgent:
 
         print("[Init] SACDistanceAgent setup complete")
         print(
-            f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")
-        print(
-            f"[Init] lr={lr}, gamma={gamma}, tau={tau}, rep_loss_weight={rep_loss_weight}, target_entropy={self.target_entropy:.2f}")
-        print(f'Kernel aux weight: {self.kernel_aux_weight}, kernel temp: {self.kernel_temp}, kernel cand: {self.kernel_cand}, kernel state k: {self.kernel_state_k}, kernel adaptive tau: {self.kernel_adaptive_tau}')
+            f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
+        print(f'Normalize obs: {self.normalize_obs}')
 
     @property
     def alpha(self):
@@ -245,7 +164,11 @@ class SACDistanceDiffusionAgent:
             while not (done or trunc):
                 ot = torch.as_tensor(o, device=self.device,
                                      dtype=torch.float32).unsqueeze(0)
-                otn = self.obs_rms.normalize(ot)
+                if self.normalize_obs:
+                    otn = self.obs_rms.normalize(ot)
+                else:
+                    otn = ot
+                    
                 a = self._sample_action(otn, eval_mode=True).clamp(-1, 1)
                 a_env = ((a + 1) / 2) * (self.high - self.low) + self.low
                 o, r, done, trunc, _ = self.eval_env.step(
@@ -271,7 +194,11 @@ class SACDistanceDiffusionAgent:
     # ---------- critic / actor / rep losses ----------
     def _td_targets(self, r, d, next_obs):
         with torch.no_grad():
-            next_obs_n = self.obs_rms.normalize(next_obs)
+            if self.normalize_obs:
+                next_obs_n = self.obs_rms.normalize(next_obs)
+            else:
+                next_obs_n = next_obs
+                
             a2, logp2, _ = self.actor.sample(next_obs_n)
             q1t, q2t = self.q_targ(next_obs_n, a2)
             qt = torch.min(q1t, q2t)
@@ -282,18 +209,52 @@ class SACDistanceDiffusionAgent:
         return target
 
     def _q_loss(self, obs, act_env, r, next_obs, d):
-        obs_n = self.obs_rms.normalize(obs)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)
+        else:
+            obs_n = obs
         act = self._env_to_action(act_env)
         q1, q2 = self.qnet(obs_n, act)
         target = self._td_targets(r, d, next_obs)
         loss_q = F.mse_loss(q1, target) + F.mse_loss(q2, target)
 
         return loss_q, {"train/q_loss_raw": float(loss_q.item())}
+
+    def _actor_alpha_loss(self, obs):
     
+        # Normalized in-state Qhat
+        Qhat, logp = self._qhat_in_state_norm(obs,
+                                                K=self.K,
+                                                noise_std=self.noise_std,
+                                                softmax_temp=1.0,
+                                                eps=0.05)
+
+        alpha = self.log_alpha.exp()
+
+        entropy_loss = (alpha * logp).mean()
+
+        actor_loss = entropy_loss - Qhat.mean()
+        alpha_loss = -(self.log_alpha *
+                       (logp + self.target_entropy).detach()).mean()
+
+        logs = {
+            # "kernel/top_state_sim_mean": float(top_vals.mean().item()),
+            "kernel/aux_term": float(-Qhat.mean().item()),
+            "train/actor_entropy_loss": float(entropy_loss.item())}
+
+        if wandb.run is not None:
+            wandb.log(logs, step=self.steps)
+
+        return actor_loss, alpha_loss
+
     def _rep_loss(self, obs, act_env, next_obs, done):
         # Use rep trunk and TARGET rep trunk (stop-grad on next)
-        obs_n = self.obs_rms.normalize(obs)
-        next_obs_n = self.obs_rms.normalize(next_obs)
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)
+            next_obs_n = self.obs_rms.normalize(next_obs)
+        else:
+            obs_n = obs
+            next_obs_n = next_obs
 
         act = self._env_to_action(act_env)
         z = self.rep_trunk(obs_n, act)
@@ -301,8 +262,9 @@ class SACDistanceDiffusionAgent:
         with torch.no_grad():  # stop-grad target
             a2, _, _ = self.actor.sample(next_obs_n)
             # add noise to a2
-            a2 += torch.randn_like(a2) * 0.2
+            a2 += torch.randn_like(a2) * self.noise_std # used 0.2
             a2 = a2.clamp(-1, 1)
+            a2 = ((a2 + 1) / 2) * (self.high - self.low) + self.low
             z_next = self.rep_trunk_targ(next_obs_n, a2)
 
             q1t, q2t = self.q_targ(obs_n, act)
@@ -318,170 +280,94 @@ class SACDistanceDiffusionAgent:
         )
         return loss, info
 
-    def _denoiser_step(self, obs, K: int = 64, beta: float = 0.10):
-        """
-        Train g_psi to denoise *top-tail* (CVaR) latents toward high-Q latents.
-        - beta: tail level (0.1 keeps top 10%)
-        """
-        eps = 1e-8
-        device = self.device
-        B = obs.size(0)
+    def _qhat_in_state_norm(self, obs, K: int = 64, noise_std: float = 0.1,
+                            softmax_temp: float = 1.0, eps: float = 0.05):
 
+        if self.normalize_obs:
+            obs_n = self.obs_rms.normalize(obs)                     # (B,D)
+        else:
+            obs_n = obs
+        B = obs_n.shape[0]
+        obs_rep = obs_n.repeat_interleave(K, dim=0)             # (B*K,D)
+
+        # --- propose K actions per current state (stop-grad path for proposals) ---
         with torch.no_grad():
-            obs_n = self.obs_rms.normalize(obs)                      # (B,D)
-            obs_rep = obs_n.repeat_interleave(K, dim=0)              # (B*K,D)
+            a_k, _, _ = self.actor.sample(obs_rep)              # (B*K,A)
+            if noise_std > 0:
+                a_k = (a_k + noise_std * torch.randn_like(a_k)).clamp(-1, 1)
+                a_k = ((a_k + 1) / 2) * (self.high - self.low) + self.low
 
-            a_k, _, _ = self.actor.sample(obs_rep)                   # (B*K,A)
-            a_k = (a_k + 0.10 * torch.randn_like(a_k)).clamp(-1, 1)
-
-            z_k = F.normalize(self.rep_trunk_targ(obs_rep, a_k), p=2, dim=1)
-            z_k = z_k.view(B, K, -1)                                 # (B,K,H)
-
+            z_k = F.normalize(self.rep_trunk_targ(
+                obs_rep, a_k), p=2, dim=1)  # (B*K,H)
             q1k, q2k = self.q_targ(obs_rep, a_k)
-            qk = torch.min(q1k, q2k).view(B, K)                      # (B,K)
+            # (B,K,1)   (stop-grad)
+            qk = torch.min(q1k, q2k).view(B, K, 1)
 
-            # ---- CVaR tail weights (stop-grad) ----
-            # threshold u: top-beta tail
-            u = torch.quantile(qk, q=1.0 - beta, dim=1,
-                               keepdim=True)     # (B,1)
-            # (B,K)
-            v = torch.relu(qk - u)
-            # small smoothing so we never get all zeros
-            v = v + 1e-6
-            # (B,K)
-            w = v / v.sum(dim=1, keepdim=True)
+        # --- anchor at current policy action (this branch carries gradients) ---
+        a_anchor, logp, _ = self.actor.sample(obs_n)            # (B,A)
+        z_i = F.normalize(self.rep_trunk(obs_n, a_anchor), p=2, dim=1)  # (B,H)
 
-            # noisy latents
-            z_noisy = z_k + self.denoiser_sigma * torch.randn_like(z_k)
-            z_noisy = F.normalize(z_noisy, p=2, dim=-1)
+        # --- cosine sims to K proposals for the same state ---
+        z_k_view = z_k.view(B, K, -1)                           # (B,K,H)
+        S = torch.einsum('bd,bkd->bk', z_i, z_k_view).clamp(-1.0, 1.0)  # (B,K)
 
-        obs_n = self.obs_rms.normalize(obs)
-        s_emb = self.state_cond(obs_n)
+        # --- kernel bandwidth τ: cosine-anneal + optional adaptive from row std ---
+        tau_row = self._kernel_tau_instate(
+            S, base_temp=softmax_temp)    # (B,1)
 
-        # (B,K,H)
-        z_hat = self.denoiser(z_noisy, s_emb)
-        cos = (z_hat * z_k).sum(dim=-1).clamp(-1.0,
-                                              1.0)                  # (B,K)
+        # --- softmax weights with τ (plus tiny ε smoothing for stability) ---
+        W = torch.softmax(S / tau_row, dim=1)                   # (B,K)
+        if eps > 0.0:
+            W = (1.0 - eps) * W + eps / K
 
-        # minimize (1 - cosine) weighted by tail weights
-        loss = (w * (1.0 - cos)).sum(dim=1).mean()
+        # --- advantage-centering: q̃_k = q_k - \bar q  (baseline is stop-grad) ---
+        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
+                                           keepdim=True).detach()  # (B,1,1)
+        # (B,K,1)
+        q_tilde = qk - q_bar
 
-        self.optim_dnsr.zero_grad()
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            list(self.denoiser.parameters()) +
-            list(self.state_cond.parameters()),
-            self.max_dnsr_grad_norm
-        )
-        self.optim_dnsr.step()
+        # --- centered readout ---
+        Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)            # (B,1)
 
-        if wandb.run is not None:
-            wandb.log({"ldp/denoiser_loss": float(loss.item()),
-                       "ldp/sigma": float(self.denoiser_sigma),
-                       "ldp/cvar_beta": float(beta)}, step=self.steps)
-
-    def _actor_loss_ldp(self,
-                        obs,
-                        K: int = 64,
-                        pull_weight: float = 1.0,
-                        beta_cvar: float = 0.10,      # CVaR level for both denoiser and jump
-                        jump_thresh: float = 0.03,    # if 1 - cos < thresh, use a "jump"
-                        # (sigma_max, sigma_min, T_anneal)
-                        sigma_schedule: tuple = (0.30, 0.15, 200_000)
-                        ):
-        """
-        Latent Diffusion Pull (aggressive):
-        - trains denoiser on CVaR tail (top beta)
-        - actor pull weight is amplified by the current misalignment (1 - cos)
-        - when the denoiser pull is too small, jump to a CVaR barycenter in latent space
-        """
-        # ---- anneal sigma high -> low (bigger steps early, precise later) ----
-        sig_max, sig_min, T = sigma_schedule
-        p = min(1.0, float(self.steps) / float(T))
-        # cosine anneal
-        self.denoiser_sigma = sig_min + 0.5 * \
-            (sig_max - sig_min) * (1.0 + math.cos(math.pi * p))
-
-        # ---- a couple of denoiser steps on CVaR tail ----
-        for _ in range(self.denoiser_steps):
-            self._denoiser_step(obs, K=K, beta=beta_cvar)
-
-        obs_n = self.obs_rms.normalize(obs)                          # (B,D)
-        a_anchor, logp, _ = self.actor.sample(obs_n)
-        z_i = F.normalize(self.rep_trunk(
-            obs_n, a_anchor), p=2, dim=1)   # (B,H)
-
-        # ---- denoised target of the anchor (stop-grad) ----
-        with torch.no_grad():
-            s_emb = self.state_cond(obs_n)
-            z_noisy = F.normalize(
-                z_i + self.denoiser_sigma * torch.randn_like(z_i), p=2, dim=-1)
-            z_hat = self.denoiser(
-                z_noisy, s_emb)                        # (B,H)
-
-        # cosine gap and adaptive pull strength
-        cos_i = (z_i * z_hat).sum(dim=-1).clamp(-1.0, 1.0)               # (B,)
-        gap = (1.0 - cos_i).detach()                                     # (B,)
-        # amplify pull when almost aligned (prevents tiny gradients)
-        # pull_weight_eff in [pull_weight, ~2.5 * pull_weight]
-        pull_weight_eff = pull_weight * \
-            (1.0 + 1.5 * (gap / (gap.mean() + 1e-6))).clamp(1.0, 2.5).mean()
-
-        # base pull loss
-        pull_loss = pull_weight_eff * (1.0 - cos_i).mean()
-
-        # ---- fallback: CVaR barycenter "jump" if pull is vanishing ----
-        # condition: mean gap below threshold
-        if gap.mean().item() < jump_thresh:
-            with torch.no_grad():
-                # reuse proposals to compute a CVaR latent barycenter
-                B = obs_n.size(0)
-                obs_rep = obs_n.repeat_interleave(K, dim=0)
-                a_k, _, _ = self.actor.sample(obs_rep)
-                a_k = (a_k + 0.10 * torch.randn_like(a_k)).clamp(-1, 1)
-
-                z_k = F.normalize(self.rep_trunk_targ(
-                    obs_rep, a_k), p=2, dim=1).view(B, K, -1)
-                q1k, q2k = self.q_targ(obs_rep, a_k)
-                qk = torch.min(q1k, q2k).view(B, K)
-
-                u = torch.quantile(qk, q=1.0 - beta_cvar,
-                                   dim=1, keepdim=True)  # (B,1)
-                # (B,K)
-                v = torch.relu(qk - u) + 1e-6
-                v = v / v.sum(dim=1, keepdim=True)
-                z_cvar = F.normalize(torch.einsum(
-                    'bk,bkd->bd', v, z_k), p=2, dim=1)  # (B,H)
-
-            # add a jump loss
-            cos_jump = (z_i * z_cvar).sum(dim=-1).clamp(-1.0, 1.0)
-            # scale jump to be comparable to pull
-            jump_loss = pull_weight * (1.0 - cos_jump).mean()
-            pull_loss = pull_loss + 0.5 * jump_loss  # blend to keep stability
-
-            if wandb.run is not None:
-                wandb.log({"ldp/jump_triggered": 1.0,
-                           "ldp/jump_loss": float(jump_loss.item())}, step=self.steps)
-
-        # ---- SAC entropy and alpha update ----
-        alpha = self.log_alpha.exp()
-        entropy_loss = (alpha * logp).mean()
-        alpha_loss = -(self.log_alpha *
-                       (logp + self.target_entropy).detach()).mean()
-
-        actor_loss = entropy_loss + pull_loss
-
+        # (optional) diagnostics
         if wandb.run is not None:
             wandb.log({
-                "ldp/pull_loss": float(pull_loss.item()),
-                "ldp/cos_anchor_hat": float(cos_i.mean().item()),
-                "ldp/sigma": float(self.denoiser_sigma),
-                "ldp/pull_weight_eff": float(pull_weight_eff.item() if torch.is_tensor(pull_weight_eff) else pull_weight_eff),
-                "ldp/gap_mean": float(gap.mean().item())
+                "kernel_instate/tau_mean": float(tau_row.mean().item()),
+                "kernel_instate/top_sim_mean": float(S.max(dim=1).values.mean().item()),
+                "kernel_instate/qbar_mean": float(q_bar.mean().item()),
+                "kernel_instate/qtilde_abs_mean": float(q_tilde.abs().mean().item()),
             }, step=self.steps)
 
-        return actor_loss, alpha_loss
+        return Qhat, logp
 
+
+    def _kernel_tau_instate(self, S_rowwise: torch.Tensor, base_temp: float) -> torch.Tensor:
+        """
+        S_rowwise: (B, K) cosine sims for a single state across K proposals.
+        Returns τ as (B,1). Uses cosine anneal τ_max->τ_min, plus optional adaptive bump from row std.
+        """
+        B = S_rowwise.size(0)
+        device = S_rowwise.device
+
+        # schedule window & bounds
+        T_sched = 200_000
+        # start wider than config
+        tau_max = max(0.75, float(base_temp))
+        tau_min = max(0.05, 0.30 * float(base_temp))   # end sharper
+
+        p = min(1.0, float(self.steps) / float(T_sched))
+        # cosine anneal: p=0 -> tau_max, p=1 -> tau_min
+        tau_sched = tau_min + 0.5 * \
+            (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
+
+        if self.kernel_adaptive_tau:
+            row_std = S_rowwise.std(dim=1, keepdim=True).clamp(min=1e-4)
+            tau_row = torch.full(
+                (B, 1), tau_sched, device=device) + row_std  # c=1.0
+        else:
+            tau_row = torch.full((B, 1), tau_sched, device=device)
+
+        return tau_row  # (B,1)
     # ---------- training ----------
 
     def train(self):
@@ -494,8 +380,12 @@ class SACDistanceDiffusionAgent:
         while self.steps < self.total_steps:
             ot = torch.as_tensor(o, device=self.device,
                                  dtype=torch.float32).unsqueeze(0)
-            self.obs_rms.update(ot)
-            otn = self.obs_rms.normalize(ot)
+            
+            if self.normalize_obs:
+                self.obs_rms.update(ot)
+                otn = self.obs_rms.normalize(ot)
+            else:
+                otn = ot
 
             with torch.no_grad():
                 if self.steps < self.warmup_steps:
@@ -507,7 +397,7 @@ class SACDistanceDiffusionAgent:
 
             o2, r, done, trunc, _ = self.env.step(a_env)
             self.replay.add(o, o2, a_env, r, done or trunc)
-
+            
             ep_r += r
             ep_len += 1
             self.steps += 1
@@ -548,7 +438,7 @@ class SACDistanceDiffusionAgent:
                     wandb.log({**qinfo, "train/q_loss": float(loss_q.item()),
                                "train/q_grad_norm": float(q_grad_norm)}, step=self.steps)
 
-                # ---- Representation loss (with target rep trunk) ----                
+
                 rep_loss, rep_info = self._rep_loss(
                     obs, act_env, next_obs, done_b)
                 self.optim_rep.zero_grad()
@@ -562,14 +452,7 @@ class SACDistanceDiffusionAgent:
                 if wandb.run is not None:
                     wandb.log(rep_logs, step=self.steps)
 
-                actor_loss, alpha_loss = self._actor_loss_ldp(
-                    obs,
-                    K=self.K,
-                    pull_weight=1.5, # 1.0
-                    beta_cvar=0.05, # 0.10
-                    jump_thresh=0.03,
-                    sigma_schedule=(0.30, 0.15, 200_000)
-                )
+                actor_loss, alpha_loss = self._actor_alpha_loss(obs)
 
                 self.optim_actor.zero_grad()
                 actor_loss.backward()

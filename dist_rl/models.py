@@ -1,274 +1,134 @@
-from typing import Tuple, Optional
-
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.distributions import Normal
 
+# -----------------------
+# Vector/continuous path
+# -----------------------
 
-class Actor(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64, max_action: float = 2.0, min_action: float = -2.0):
+class MLP(nn.Module):
+    """Plain MLP (no LayerNorm)."""
+
+    def __init__(self, in_dim, out_dim, hidden=256, layers=2, act=nn.ReLU):
         super().__init__()
-        self.max_action = max_action
-        self.min_action = min_action
+        mods = []
+        d = in_dim
+        for _ in range(layers):
+            mods += [nn.Linear(d, hidden), act()]
+            d = hidden
+        mods += [nn.Linear(d, out_dim)]
+        self.net = nn.Sequential(*mods)
 
-        # Policy network outputs mean and log_std (state-independent log_std for simplicity)
-        self.actor = nn.Sequential(
-            nn.Linear(obs_dim, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, act_dim),
-            nn.Tanh(),
-        )
-
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Returns: action, log_prob, value, mean_action (deterministic)
-        """
-        return self.actor(obs) * self.max_action
+    def forward(self, x):
+        return self.net(x)
 
 
-class Distance(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64):
-        super().__init__()
-        self.dist = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-        )
-        
-
-    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        # Concatenate observations and actions for distance computation
-        x = torch.cat([obs, actions], dim=-1)
-        return self.dist(x)
-    
-class DistanceTwin(nn.Module):
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64):
-        super().__init__()
-        self.dist = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-        )
-        
-        self.dist_2 = nn.Sequential(
-            nn.Linear(obs_dim + act_dim, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            # nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-        )
-
-    def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        # Concatenate observations and actions for distance computation
-        x = torch.cat([obs, actions], dim=-1)
-        return self.dist(x), self.dist_2(x)
-    
-    def f_1(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        # Concatenate observations and actions for distance computation
-        x = torch.cat([obs, actions], dim=-1)
-        return self.dist(x)
-
-LOG_STD_MIN = -20.0
-LOG_STD_MAX =  2.0
-
-class StochasticActor(nn.Module):
+class DistanceTrunk(nn.Module):
     """
-    Unified stochastic policy:
-    - Continuous (Box): tanh-Gaussian with log-prob correction (SAC-style).
-    - Discrete: Categorical with Gumbel-Softmax straight-through for differentiable one-hot.
-    
-    API:
-      forward(obs) -> (a_train, logp, a_mean_train)
-        * Box:        a_train, a_mean_train are in env bounds (float)
-        * Discrete:   a_train, a_mean_train are one-hot vectors (float, shape [B, nA])
-      act(obs, deterministic=False) -> env_action
-        * Box:        float vector in bounds
-        * Discrete:   integer action ids (LongTensor or numpy)
+    State-conditional action embedding z(s,a) \in R^H for vector observations & continuous actions.
+    Used for value-aware metric; NOT shared with critics.
     """
-    def __init__(self,
-                 obs_dim: int,
-                 act_dim: int,
-                 hidden_size: int = 256,
-                 max_action: Optional[float] = 1.0,
-                 min_action: Optional[float] = -1.0,
-                 action_space_type: str = "box",    # "box" or "discrete"
-                 gumbel_tau: float = 1.0):
+
+    def __init__(self, obs_dim, act_dim, hidden=256, out_dim=256, layers=3):
         super().__init__()
-        self.obs_dim = obs_dim
-        self.act_dim = act_dim
-        self.hidden = hidden_size
-        self.action_space_type = action_space_type.lower()
-        self.gumbel_tau = gumbel_tau  # temperature for Gumbel-Softmax (training)
+        self.net = MLP(obs_dim + act_dim, out_dim,
+                       hidden=hidden, layers=layers)
 
-        if self.action_space_type not in ("box", "discrete"):
-            raise ValueError("action_space_type must be 'box' or 'discrete'")
+    def forward(self, obs, act):
+        x = torch.cat([obs, act], dim=-1)
+        return self.net(x)
 
-        # Common trunk
-        self.trunk = nn.Sequential(
-            nn.Linear(obs_dim, hidden_size), nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size), nn.ReLU(),
-        )
 
-        if self.action_space_type == "box":
-            # Box (continuous) params
-            self.max_action = float(max_action)
-            self.min_action = float(min_action)
-            self.mu_head      = nn.Linear(hidden_size, act_dim)
-            self.log_std_head = nn.Linear(hidden_size, act_dim)
+class GaussianActor(nn.Module):
+    """Tanh-Gaussian policy for continuous action spaces."""
 
-        else:
-            # Discrete (categorical) params
-            # logits over n actions
-            self.logits_head = nn.Linear(hidden_size, act_dim)
+    def __init__(self, obs_dim, act_dim, hidden=256, log_std_bounds=(-5, 1)):
+        super().__init__()
+        self.net = MLP(obs_dim, hidden, hidden=hidden, layers=2)
+        self.mu = nn.Linear(hidden, act_dim)
+        self.log_std = nn.Linear(hidden, act_dim)
+        self.log_std_bounds = log_std_bounds
 
-    # ------------------ Box helpers ------------------
-    def _box_params(self, h):
-        mu = self.mu_head(h)
-        log_std = self.log_std_head(h)
-        log_std = torch.clamp(log_std, LOG_STD_MIN, LOG_STD_MAX)
+    def forward(self, obs):
+        h = self.net(obs)
+        mu = self.mu(h)
+        log_std = self.log_std(h)
+        low, high = self.log_std_bounds
+        log_std = torch.tanh(log_std)
+        log_std = low + 0.5 * (high - low) * (log_std + 1.0)
         std = torch.exp(log_std)
-        return mu, std, log_std
+        return mu, std
 
-    def _box_squash_scale(self, x):
-        # tanh squash to [-1,1], then affine map to [min, max]
-        y = torch.tanh(x)
-        a = 0.5 * ((y + 1.0) * (self.max_action - self.min_action)) + self.min_action
-        return a, y
-
-    # ---------------- Discrete helpers ----------------
-    @staticmethod
-    def _one_hot(idx: torch.Tensor, n: int) -> torch.Tensor:
-        # idx: [B] long
-        oh = F.one_hot(idx.long(), num_classes=n).float()
-        return oh
-
-    def _gumbel_softmax_st(self, logits: torch.Tensor, tau: float) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Straight-through Gumbel-Softmax:
-          returns (one_hot_like_for_forward, soft_probs_for_backward)
-        """
-        # Sample with Gumbel-Softmax (relaxed)
-        probs = F.softmax(logits, dim=-1)
-        y_soft = F.gumbel_softmax(logits, tau=tau, hard=False, dim=-1)
-        # Make a hard one-hot with straight-through estimator
-        idx = torch.argmax(y_soft, dim=-1)
-        y_hard = self._one_hot(idx, logits.size(-1))
-        y = y_hard + (y_soft - y_soft.detach())
-        # log-prob of chosen action (idx) under categorical
-        logp = torch.log(probs.clamp_min(1e-8).gather(-1, idx.unsqueeze(-1)))
-        return y, logp  # y is one-hot (ST), logp is [B,1]
-
-    # ---------------- Unified API ----------------
-    def forward(self, obs: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Returns:
-          a_train:      Box:   [B, act_dim] in bounds (float)
-                        Discr: [B, act_dim] one-hot (float, ST-Gumbel)
-          log_prob:     [B, 1]
-          a_mean_train: Box:   deterministic action (in bounds)
-                        Discr: argmax one-hot
-        """
-        h = self.trunk(obs)
-
-        if self.action_space_type == "box":
-            mu, std, log_std = self._box_params(h)
-            eps = torch.randn_like(mu)
-            pre_tanh = mu + std * eps
-
-            a_train, y = self._box_squash_scale(pre_tanh)
-            a_mean, y_mu = self._box_squash_scale(mu)
-
-            # log prob with tanh correction
-            log_prob_gauss = -0.5 * (((pre_tanh - mu) / (std + 1e-8))**2 + 2*log_std + math.log(2*math.pi))
-            log_prob_gauss = log_prob_gauss.sum(dim=-1, keepdim=True)
-            correction = torch.log(1 - y.pow(2) + 1e-6).sum(dim=-1, keepdim=True)
-            logp = log_prob_gauss - correction
-            return a_train, logp, a_mean
-
-        else:
-            logits = self.logits_head(h)  # [B, nA]
-            # ST Gumbel-Softmax for differentiable one-hot
-            a_train, logp = self._gumbel_softmax_st(logits, self.gumbel_tau)  # one-hot, [B,nA]
-            # deterministic (argmax) one-hot for logging/mean
-            idx = torch.argmax(logits, dim=-1)  # [B]
-            a_mean = self._one_hot(idx, self.act_dim)  # [B,nA]
-            return a_train, logp, a_mean
+    def sample(self, obs):
+        mu, std = self.forward(obs)
+        eps = torch.randn_like(mu)
+        pre_tanh = mu + std * eps
+        action = torch.tanh(pre_tanh)
+        # log prob with tanh correction
+        logp = (-0.5 * ((pre_tanh - mu) / std).pow(2) - torch.log(std) -
+                0.5 * math.log(2 * math.pi)).sum(-1, keepdim=True)
+        logp -= torch.log(1 - action.pow(2) + 1e-6).sum(-1, keepdim=True)
+        return action, logp, torch.tanh(mu)
 
     @torch.no_grad()
-    def act(self, obs: torch.Tensor, deterministic: bool = False):
+    def _atanh(self, x: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
         """
-        Action for the environment:
-          - Box: float vector in bounds.
-          - Discrete: integer action ids (LongTensor).
+        Stable inverse tanh for inputs in (-1, 1). Clamps to avoid inf.
+        atanh(x) = 0.5 * (log1p(x) - log1p(-x))
         """
-        h = self.trunk(obs)
-        if self.action_space_type == "box":
-            mu, std, _ = self._box_params(h)
-            pre_tanh = mu if deterministic else (mu + std * torch.randn_like(mu))
-            a, _ = self._box_squash_scale(pre_tanh)
-            return a
-        else:
-            logits = self.logits_head(h)
-            if deterministic:
-                idx = torch.argmax(logits, dim=-1)  # [B]
-            else:
-                probs = F.softmax(logits, dim=-1)
-                idx = torch.distributions.Categorical(probs=probs).sample()  # [B]
-            return idx  # integer ids
+        x = x.clamp(-1 + eps, 1 - eps)
+        return 0.5 * (torch.log1p(x) - torch.log1p(-x))
 
-class ValueNetLSTM(nn.Module):
-    """
-    LSTM-based value network over the last `seq_len` (s,a) steps.
+    def _gaussian_params(self, obs: torch.Tensor):
+        """
+        Utility to get mean and std from your network's forward.
+        Assumes forward() -> (mu, log_std) with shape (B, act_dim).
+        Clamp log_std if you do that in sample().
+        """
+        mu, log_std = self.forward(obs)
+        # keep in sync with your sample(): same clamps
+        log_std = torch.clamp(log_std, min=-20.0, max=2.0)
+        std = log_std.exp()
+        return mu, std
 
-    __init__(obs_dim: int, act_dim: int, hidden_size: int = 64, seq_len: int = 10)
-    forward(obs_seq: (B,seq_len,obs_dim), act_seq: (B,seq_len,act_dim)) -> (B,1)
-    """
+    def log_prob(self, obs: torch.Tensor, a_squash: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+        """
+        Log πθ(a|s) for a tanh-squashed Gaussian policy.
+        Inputs:
+          obs:      (B, obs_dim)
+          a_squash: (B, act_dim), each component in [-1, 1] (what your actor outputs after tanh)
+        Returns:
+          logp:     (B,) tensor of log-probabilities under πθ(·|obs)
+        Notes:
+          log π(a) = log N(u; μ, σ^2) - Σ log(1 - tanh(u)^2)  with  a = tanh(u).
+          We compute u = atanh(a) stably and apply the Jacobian correction.
+        """
+        mu, std = self._gaussian_params(obs)          # (B, A) each
+        # inverse squash (stable)
+        a = a_squash.clamp(-1 + eps, 1 - eps)
+        u = self._atanh(a, eps=eps)                   # (B, A)
 
-    def __init__(self, obs_dim: int, act_dim: int, hidden_size: int = 64, seq_len: int = 10):
+        # Gaussian log-prob of pre-tanh action u
+        dist = Normal(mu, std)
+        logp_u = dist.log_prob(u).sum(dim=-1)         # (B,)
+
+        # change-of-variables correction: sum log(1 - tanh(u)^2) = sum log(1 - a^2)
+        # subtract because p(a) = p(u) * |det du/da| and du/da = 1/(1 - a^2)
+        log_det = torch.log(1 - a * a + eps).sum(dim=-1)  # (B,)
+        logp = logp_u - log_det
+        return logp
+
+
+class TwinQ(nn.Module):
+    """Twin critics for vector obs + continuous actions: Q(s,a) each as MLP."""
+
+    def __init__(self, obs_dim, act_dim, hidden=256):
         super().__init__()
-        self.obs_dim = obs_dim
-        self.act_dim = act_dim
-        self.hidden_size = hidden_size
-        self.seq_len = seq_len
+        self.q1 = MLP(obs_dim + act_dim, 1, hidden=hidden, layers=2)
+        self.q2 = MLP(obs_dim + act_dim, 1, hidden=hidden, layers=2)
 
-        in_dim = obs_dim + act_dim
-        self.lstm = nn.LSTM(
-            input_size=in_dim,
-            hidden_size=hidden_size,
-            num_layers=2,
-            batch_first=True
-        )
-        self.head = nn.Sequential(
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-            nn.LayerNorm(hidden_size),
-            nn.ReLU(),
-            nn.Linear(hidden_size, hidden_size),
-        )
-
-    def forward(self, obs_seq: torch.Tensor, act_seq: torch.Tensor) -> torch.Tensor:
-        # assert obs_seq.shape[1] == self.seq_len and act_seq.shape[1] == self.seq_len, \
-        #     f"expected seq_len={self.seq_len}"
-
-        x = torch.cat([obs_seq, act_seq], dim=-1)  # (B,T,obs+act)
-        out, _ = self.lstm(x)                      # (B,T,H)
-        last = out[:, -1]                          # (B,H)
-        v = self.head(last)                        # (B,1)
-        return v
-
+    def forward(self, obs, act):
+        x = torch.cat([obs, act], dim=-1)
+        return self.q1(x), self.q2(x)
