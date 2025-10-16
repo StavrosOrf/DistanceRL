@@ -46,6 +46,9 @@ def data_fetcher():
         env_id = config['env_id']
         seed = config['seed']
 
+        if algo == 'SACDistanceAgentNew':
+            continue
+
         print(
             f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")
 
