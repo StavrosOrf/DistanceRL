@@ -121,6 +121,34 @@ python main.py --env-id BipedalWalker-v3 --algo DistRL \
 python main.py --env-id Hopper-v4 --algo DistRL --render True --eval-episodes 10
 ```
 
+### Atari baselines with Stable-Baselines3
+
+The repository also ships a helper script for launching *sticky-action* Atari runs with SB3 baselines. Make sure the extra
+dependencies are installed before launching experiments:
+
+```bash
+pip install gymnasium[atari] AutoROM.accept-rom-license
+# Optional: distributional DQN variants
+pip install sb3-contrib
+```
+
+The `classic_rl/sb3_atari_train.py` entrypoint mirrors the logging flow of `sb3_train.py` while pulling SOTA hyperparameters
+from `classic_rl/hyperparams/atari/`.
+
+```bash
+# Train DQN on Breakout with WandB/TensorBoard logging and evaluation every 100k steps
+python classic_rl/sb3_atari_train.py --env-id ALE/Breakout-v5 --algo dqn \
+  --total-timesteps 10000000 --device cuda --seed 42 \
+  --tensorboard-log ./logs/atari --output-dir ./runs/breakout_dqn
+
+# Launch PPO with 8 parallel environments on Pong
+python classic_rl/sb3_atari_train.py --env-id ALE/Pong-v5 --algo ppo --n-envs 8 \
+  --total-timesteps 5000000 --device cuda
+```
+
+Per-environment settings (buffer sizes, learning rate schedules, evaluation cadence, etc.) can be customised by editing the
+YAML files in `classic_rl/hyperparams/atari/` or by overriding CLI flags such as `--eval-freq` and `--n-envs`.
+
 ---
 
 ## Offline RL with Minari datasets

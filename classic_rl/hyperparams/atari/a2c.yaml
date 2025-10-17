@@ -1,0 +1,30 @@
+ALE/Breakout-v5:
+  policy: CnnPolicy
+  n_envs: 16
+  n_steps: 5
+  gamma: 0.99
+  gae_lambda: 1.0
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  rms_prop_eps: 1e-5
+  use_rms_prop: true
+  learning_rate: 0.0007
+  learning_rate_schedule: linear
+  eval_interval: 100000
+  eval_episodes: 10
+ALE/Pong-v5:
+  policy: CnnPolicy
+  n_envs: 16
+  n_steps: 5
+  gamma: 0.99
+  gae_lambda: 1.0
+  ent_coef: 0.01
+  vf_coef: 0.5
+  max_grad_norm: 0.5
+  rms_prop_eps: 1e-5
+  use_rms_prop: true
+  learning_rate: 0.0007
+  learning_rate_schedule: linear
+  eval_interval: 100000
+  eval_episodes: 10

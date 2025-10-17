@@ -1,0 +1,34 @@
+ALE/Breakout-v5:
+  policy: CnnPolicy
+  n_envs: 8
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  vf_coef: 1.0
+  max_grad_norm: 0.5
+  clip_range: 0.1
+  learning_rate: 0.00025
+  learning_rate_schedule: linear
+  eval_interval: 100000
+  eval_episodes: 10
+  normalize_advantage: true
+ALE/Pong-v5:
+  policy: CnnPolicy
+  n_envs: 8
+  n_steps: 128
+  batch_size: 256
+  n_epochs: 4
+  gamma: 0.99
+  gae_lambda: 0.95
+  ent_coef: 0.01
+  vf_coef: 1.0
+  max_grad_norm: 0.5
+  clip_range: 0.1
+  learning_rate: 0.00025
+  learning_rate_schedule: linear
+  eval_interval: 100000
+  eval_episodes: 10
+  normalize_advantage: true
