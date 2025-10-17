@@ -296,7 +296,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--out", type=Path, default=Path("results_analysis/plots"),
                         help="Directory to save plot images")
     parser.add_argument("--show", default=False, action="store_true", help="Display plots interactively")
-    parser.add_argument("--ema-alpha", type=float, default=0.0,
+    parser.add_argument("--ema-alpha", type=float, default=0.8,
                         help="EMA smoothing factor (0-1). Higher=more smoothing. 0=disabled. Recommended: 0.1-0.5")
     parser.add_argument("--max-step", type=int, default=1_000_000,
                         help="Maximum training step to plot (set negative to include all)")
