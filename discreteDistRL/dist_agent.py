@@ -39,7 +39,7 @@ class AgentConfig:
     lr: float = 3e-4
     target_entropy_scale: float = 0.98
     updates_per_step: int = 1
-    rep_gamma_shape: float = 1.0
+    rep_gamma_shape: float = 2.0
     rep_lam: float = 0.5
     rep_huber: float = 0.2
     warmup_steps: int = 50_000
@@ -131,6 +131,12 @@ class DiscreteDistAgent:
         print(
             f"[Init] DiscreteDistAgent env={config.env_id} device={config.device} total_steps={config.total_steps}"
         )
+        print(f"[Init] Observation shape: {obs_shape}, Action dim: {self.action_dim}")
+        print(f"[Init] Feature dim: {feature_dim}, Hidden dim: {hidden_dim}")
+        print(f"[Init] Buffer size: {config.buffer_size}, Batch size: {config.batch_size}")
+        print(f"[Init] Warmup steps: {config.warmup_steps}, Eval freq: {config.eval_freq}")
+        print(f"[Init] Gamma: {config.gamma}, Tau: {config.tau}, LR: {config.lr}")
+        print(f"[Init] Rep gamma shape: {config.rep_gamma_shape}, Rep lambda: {config.rep_lam}")
 
     @property
     def alpha(self) -> float:
@@ -157,8 +163,9 @@ class DiscreteDistAgent:
         return int(action.item())
 
     def evaluate(self) -> float:
+        print(f"\n[Eval] Step {self.steps}: Starting evaluation ({self.cfg.eval_episodes} episodes)...")
         returns = []
-        for _ in range(self.cfg.eval_episodes):
+        for ep_idx in range(self.cfg.eval_episodes):
             obs, _ = self.eval_env.reset()
             done = False
             total = 0.0
@@ -169,6 +176,10 @@ class DiscreteDistAgent:
                 done = terminated or truncated
             returns.append(total)
         mean_return = float(np.mean(returns))
+        std_return = float(np.std(returns))
+        min_return = float(np.min(returns))
+        max_return = float(np.max(returns))
+        print(f"[Eval] Mean: {mean_return:.2f} ± {std_return:.2f} (Min: {min_return:.2f}, Max: {max_return:.2f})")
         if wandb.run is not None:
             wandb.log({"eval/return": mean_return, "step": self.steps})
         return mean_return
@@ -311,11 +322,17 @@ class DiscreteDistAgent:
             "step": self.steps,
         }
         torch.save(payload, path)
+        print(f"[Save] Checkpoint saved: {tag} at step {self.steps}")
 
     def train(self) -> None:
+        print(f"\n[Train] Starting training loop...")
+        print(f"[Train] Warmup phase: steps 1-{self.cfg.warmup_steps}")
+        print(f"[Train] Training phase: steps {self.cfg.warmup_steps+1}-{self.cfg.total_steps}\n")
+        
         obs, _ = self.env.reset()
         episode_reward = 0.0
         episode_length = 0
+        episode_count = 0
 
         for self.steps in range(1, self.cfg.total_steps + 1):
             epsilon = self.epsilon_schedule.value(self.steps)
@@ -333,6 +350,7 @@ class DiscreteDistAgent:
             episode_length += 1
 
             if done:
+                episode_count += 1
                 if wandb.run is not None:
                     wandb.log(
                         {
@@ -341,11 +359,21 @@ class DiscreteDistAgent:
                             "step": self.steps,
                         }
                     )
+                # Print every episode during warmup, every 10 episodes during training
+                if self.steps < self.cfg.warmup_steps or episode_count % 10 == 0:
+                    phase = "Warmup" if self.steps < self.cfg.warmup_steps else "Train"
+                    print(f"[{phase}] Step {self.steps:7d} | Episode {episode_count:4d} | Return: {episode_reward:7.2f} | Length: {episode_length:4d} | Buffer: {len(self.replay):7d}")
+                
                 obs, _ = self.env.reset()
                 episode_reward = 0.0
                 episode_length = 0
 
             if self.steps >= self.cfg.warmup_steps and len(self.replay) >= self.cfg.batch_size:
+                # Print when starting training phase
+                if self.steps == self.cfg.warmup_steps:
+                    print(f"\n[Train] Warmup complete! Starting gradient updates...")
+                    print(f"[Train] Buffer size: {len(self.replay)}, Alpha: {self.alpha:.4f}\n")
+                
                 for _ in range(self.cfg.updates_per_step):
                     batch = self.replay.sample(self.cfg.batch_size)
                     self._update_critics(batch)
@@ -356,8 +384,14 @@ class DiscreteDistAgent:
             if self.steps % self.cfg.eval_freq == 0:
                 eval_return = self.evaluate()
                 if eval_return > self.best_eval:
+                    print(f"[Eval] New best return: {eval_return:.2f} (previous: {self.best_eval:.2f})")
                     self.best_eval = eval_return
                     self.save_checkpoint("best")
+                else:
+                    print(f"[Eval] Current best remains: {self.best_eval:.2f}")
+                print()  # Empty line for readability
 
         # final checkpoint
+        print(f"\n[Train] Training complete! Total steps: {self.cfg.total_steps}")
+        print(f"[Train] Best eval return: {self.best_eval:.2f}")
         self.save_checkpoint("final")

@@ -6,9 +6,9 @@ import argparse
 import torch
 import wandb
 
-from .dist_agent import AgentConfig, DiscreteDistAgent
-from .utils import set_seed
-from .wrappers import make_atari_env
+from discreteDistRL.dist_agent import AgentConfig, DiscreteDistAgent
+from discreteDistRL.utils import set_seed
+from discreteDistRL.wrappers import make_atari_env
 
 
 def parse_args() -> argparse.Namespace:
