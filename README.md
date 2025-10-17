@@ -92,6 +92,7 @@ sequenceDiagram
    pip install gymnasium[box2d] torch wandb pyyaml numpy scipy
    ```
 3. **Optional extras** – enable MuJoCo support via `pip install mujoco` and `pip install gymnasium[mujoco]`.
+4. **Atari pipeline** – install the pixel-based dependencies with `pip install gymnasium[atari] ale-py` before launching the discrete agent.
 
 ---
 
@@ -120,6 +121,14 @@ python main.py --env-id BipedalWalker-v3 --algo DistRL \
 ```bash
 python main.py --env-id Hopper-v4 --algo DistRL --render True --eval-episodes 10
 ```
+
+### Train the discrete Atari agent
+```bash
+python -m discreteDistRL.train_dist_agent \
+  --env-id ALE/Pong-v5 --total-steps 5_000_000 \
+  --device cuda --project dist_atari --run-name pong_dist_discrete
+```
+The helper automatically applies Atari preprocessing (grayscale down-sampling, frame stacking, reward clipping, sticky actions) to match standard DQN-style setups. Adjust `--epsilon-*` flags and learning hyper-parameters to target longer 10M–50M frame runs.
 
 ---
 
