@@ -46,6 +46,11 @@ class AgentConfig:
     epsilon_start: float = 1.0
     epsilon_end: float = 0.05
     epsilon_decay: int = 250_000
+    policy_smoothing_eps: float = 0.2
+    proposal_samples: int = 32
+    kernel_softmax_temp: float = 1.0
+    kernel_eps: float = 0.05
+    kernel_adaptive_tau: bool = True
     save_dir: str = "checkpoints"
 
 
@@ -117,6 +122,15 @@ class DiscreteDistAgent:
         self.steps = 0
         self.best_eval = -float("inf")
 
+        self.policy_smoothing_eps = config.policy_smoothing_eps
+        self.proposal_samples = max(1, config.proposal_samples)
+        self.kernel_softmax_temp = config.kernel_softmax_temp
+        self.kernel_eps = config.kernel_eps
+        self.kernel_adaptive_tau = config.kernel_adaptive_tau
+        self.all_actions = torch.arange(
+            self.action_dim, device=self.device, dtype=torch.long
+        )
+
         self.epsilon_schedule = LinearSchedule(
             config.epsilon_start,
             config.epsilon_end,
@@ -137,6 +151,9 @@ class DiscreteDistAgent:
         print(f"[Init] Warmup steps: {config.warmup_steps}, Eval freq: {config.eval_freq}")
         print(f"[Init] Gamma: {config.gamma}, Tau: {config.tau}, LR: {config.lr}")
         print(f"[Init] Rep gamma shape: {config.rep_gamma_shape}, Rep lambda: {config.rep_lam}")
+        print(
+            f"[Init] Policy smoothing epsilon: {self.policy_smoothing_eps}, Proposal samples: {self.proposal_samples}"
+        )
 
     @property
     def alpha(self) -> float:
@@ -161,6 +178,86 @@ class DiscreteDistAgent:
             else:
                 action = dist.sample()
         return int(action.item())
+
+    def _smoothed_action_distribution(
+        self, logits: torch.Tensor
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        log_probs = torch.log_softmax(logits, dim=-1)
+        probs = log_probs.exp()
+
+        eps = self.policy_smoothing_eps
+        if eps <= 0.0:
+            return probs, log_probs
+
+        num_actions = logits.size(-1)
+        uniform = torch.full_like(probs, 1.0 / num_actions)
+        probs = (1.0 - eps) * probs + eps * uniform
+        probs = probs / probs.sum(dim=-1, keepdim=True)
+        log_probs = torch.log(probs + 1e-8)
+        return probs, log_probs
+
+    def _kernel_tau_instate(
+        self, S_rowwise: torch.Tensor, base_temp: float
+    ) -> torch.Tensor:
+        rows = S_rowwise.size(0)
+        device = S_rowwise.device
+
+        tau_max = max(0.75, float(base_temp))
+        tau_min = max(0.05, 0.30 * float(base_temp))
+        T_sched = 200_000
+        p = min(1.0, float(self.steps) / float(T_sched))
+        tau_sched = tau_min + 0.5 * (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
+
+        tau = torch.full((rows, 1), tau_sched, device=device)
+        if self.kernel_adaptive_tau:
+            row_std = S_rowwise.std(dim=1, keepdim=True).clamp(min=1e-4)
+            tau = tau + row_std
+        return tau
+
+    def _qhat_in_state_norm(
+        self, features: torch.Tensor, probs: torch.Tensor
+    ) -> torch.Tensor:
+        K = max(1, self.proposal_samples)
+
+        with torch.no_grad():
+            proposal_actions = torch.multinomial(
+                probs.detach(), num_samples=K, replacement=True
+            )
+            z_k = self.rep_trunk_target(features, proposal_actions)
+            z_k = F.normalize(z_k, p=2, dim=-1)
+            q1_t, q2_t = self.q_target(features)
+            q_min_target = torch.min(q1_t, q2_t)
+            q_proposals = q_min_target.gather(1, proposal_actions)
+
+        actions_full = self.all_actions.unsqueeze(0).expand(features.size(0), -1)
+        z_anchor = self.rep_trunk(features, actions_full)
+        z_anchor = F.normalize(z_anchor, p=2, dim=-1)
+
+        S = torch.einsum("bah,bkh->bak", z_anchor, z_k).clamp(-1.0, 1.0)
+        S_flat = S.view(-1, K)
+        tau_flat = self._kernel_tau_instate(
+            S_flat, base_temp=self.kernel_softmax_temp
+        )
+        W = torch.softmax(S_flat / tau_flat, dim=-1)
+        if self.kernel_eps > 0.0:
+            W = (1.0 - self.kernel_eps) * W + self.kernel_eps / K
+        W = W.view(features.size(0), self.action_dim, K)
+
+        q_prop = q_proposals.unsqueeze(1)
+        q_bar = (W * q_prop).sum(dim=-1, keepdim=True).detach()
+        q_tilde = q_prop - q_bar
+        Qhat = (W * q_tilde).sum(dim=-1)
+
+        if wandb.run is not None:
+            wandb.log(
+                {
+                    "kernel_instate/mean_tau": float(tau_flat.mean().item()),
+                    "kernel_instate/qhat_abs_mean": float(Qhat.abs().mean().item()),
+                },
+                step=self.steps,
+            )
+
+        return Qhat
 
     def evaluate(self) -> float:
         print(f"\n[Eval] Step {self.steps}: Starting evaluation ({self.cfg.eval_episodes} episodes)...")
@@ -198,9 +295,8 @@ class DiscreteDistAgent:
 
         with torch.no_grad():
             next_features = self.encoder_target(next_obs)
-            dist_next, logits_next = self.actor_target(next_features)
-            log_probs_next = torch.log_softmax(logits_next, dim=-1)
-            probs_next = log_probs_next.exp()
+            _, logits_next = self.actor_target(next_features)
+            probs_next, log_probs_next = self._smoothed_action_distribution(logits_next)
             next_q1, next_q2 = self.q_target(next_features)
             min_next_q = torch.min(next_q1, next_q2)
             next_values = (probs_next * (min_next_q - self.alpha * log_probs_next)).sum(dim=-1)
@@ -226,12 +322,10 @@ class DiscreteDistAgent:
         with torch.no_grad():
             features = self.encoder(obs)
 
-        dist, logits = self.actor(features)
-        log_probs = torch.log_softmax(logits, dim=-1)
-        probs = log_probs.exp()
-        q1, q2 = self.q_net(features)
-        min_q = torch.min(q1, q2).detach()
-        actor_loss = (probs * (self.alpha * log_probs - min_q)).sum(dim=-1).mean()
+        _, logits = self.actor(features)
+        probs, log_probs = self._smoothed_action_distribution(logits)
+        qhat = self._qhat_in_state_norm(features, probs)
+        actor_loss = (probs * (self.alpha * log_probs - qhat)).sum(dim=-1).mean()
 
         self.optim_actor.zero_grad()
         actor_loss.backward()
@@ -251,6 +345,7 @@ class DiscreteDistAgent:
                     "train/actor_loss": float(actor_loss.item()),
                     "train/entropy": float(entropy.mean().item()),
                     "train/alpha": float(self.alpha),
+                    "train/qhat_mean": float(qhat.mean().item()),
                     "step": self.steps,
                 }
             )
@@ -272,9 +367,19 @@ class DiscreteDistAgent:
         z = self.rep_trunk(features, actions)
 
         with torch.no_grad():
-            dist_next, logits_next = self.actor_target(next_features)
-            next_actions = dist_next.sample()
-            z_next = self.rep_trunk_target(next_features, next_actions)
+            _, logits_next = self.actor_target(next_features)
+            probs_next, _ = self._smoothed_action_distribution(logits_next)
+            proposal_actions = torch.multinomial(
+                probs_next, num_samples=self.proposal_samples, replacement=True
+            )
+            z_candidates = self.rep_trunk_target(next_features, proposal_actions)
+            q1_next, q2_next = self.q_target(next_features)
+            q_min_next = torch.min(q1_next, q2_next)
+            q_candidates = q_min_next.gather(1, proposal_actions)
+            best_idx = torch.argmax(q_candidates, dim=1)
+            batch_indices = torch.arange(proposal_actions.size(0), device=self.device)
+            next_actions = proposal_actions[batch_indices, best_idx]
+            z_next = z_candidates[batch_indices, best_idx]
             q1_t, q2_t = self.q_target(features)
             q_targ = torch.min(q1_t, q2_t).gather(1, actions.unsqueeze(-1)).squeeze(-1)
 

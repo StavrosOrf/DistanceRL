@@ -29,6 +29,35 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--epsilon-start", type=float, default=1.0, help="Initial epsilon for epsilon-greedy exploration.")
     parser.add_argument("--epsilon-end", type=float, default=0.05, help="Final epsilon value.")
     parser.add_argument("--epsilon-decay", type=int, default=250_000, help="Steps to anneal epsilon.")
+    parser.add_argument(
+        "--policy-smoothing-eps",
+        type=float,
+        default=0.2,
+        help="Amount of uniform mixing applied to policy logits for noisy action proposals.",
+    )
+    parser.add_argument(
+        "--proposal-samples",
+        type=int,
+        default=32,
+        help="Number of action proposals drawn per state for kernel Q aggregation.",
+    )
+    parser.add_argument(
+        "--kernel-softmax-temp",
+        type=float,
+        default=1.0,
+        help="Base temperature for the proposal similarity softmax kernel.",
+    )
+    parser.add_argument(
+        "--kernel-eps",
+        type=float,
+        default=0.05,
+        help="Epsilon smoothing term applied to kernel weights for stability.",
+    )
+    parser.add_argument(
+        "--no-kernel-adaptive-tau",
+        action="store_true",
+        help="Disable adaptive adjustment of kernel temperature using similarity variance.",
+    )
     parser.add_argument("--frames", type=int, default=4, help="Number of stacked frames.")
     parser.add_argument("--no-sticky", action="store_true", help="Disable sticky actions (repeat probability 0.25).")
     parser.add_argument("--no-clip", action="store_true", help="Disable reward clipping to [-1, 1].")
@@ -77,6 +106,11 @@ def main() -> None:
         epsilon_start=args.epsilon_start,
         epsilon_end=args.epsilon_end,
         epsilon_decay=args.epsilon_decay,
+        policy_smoothing_eps=args.policy_smoothing_eps,
+        proposal_samples=args.proposal_samples,
+        kernel_softmax_temp=args.kernel_softmax_temp,
+        kernel_eps=args.kernel_eps,
+        kernel_adaptive_tau=not args.no_kernel_adaptive_tau,
         save_dir=args.save_dir,
     )
 
