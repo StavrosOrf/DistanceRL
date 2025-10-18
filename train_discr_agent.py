@@ -115,7 +115,10 @@ def main() -> None:
     )
 
     if not args.no_wandb:
-        wandb.init(project=args.project, name=args.run_name, config=vars(args))
+        wandb.init(project=args.project,
+                   name=args.run_name,
+                   entity="stavrosorf",
+                   config=vars(args))
 
     agent = DiscreteDistAgent(env, eval_env, cfg)
     agent.train()
