@@ -278,7 +278,7 @@ class DiscreteDistAgent:
         max_return = float(np.max(returns))
         print(f"[Eval] Mean: {mean_return:.2f} ± {std_return:.2f} (Min: {min_return:.2f}, Max: {max_return:.2f})")
         if wandb.run is not None:
-            wandb.log({"eval/return": mean_return, "step": self.steps})
+            wandb.log({"eval/return": mean_return}, step=self.steps)
         return mean_return
 
     def _update_critics(self, batch: Dict[str, torch.Tensor]) -> float:
@@ -314,7 +314,8 @@ class DiscreteDistAgent:
         self.optim_q.step()
 
         if wandb.run is not None:
-            wandb.log({"train/q_loss": float(loss.item()), "step": self.steps})
+            wandb.log({"train/q_loss": float(loss.item())},
+                      step=self.steps)
         return float(loss.item())
 
     def _update_actor_and_alpha(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
@@ -346,8 +347,7 @@ class DiscreteDistAgent:
                     "train/entropy": float(entropy.mean().item()),
                     "train/alpha": float(self.alpha),
                     "train/qhat_mean": float(qhat.mean().item()),
-                    "step": self.steps,
-                }
+                }, step=self.steps,
             )
         return {
             "actor_loss": float(actor_loss.item()),
@@ -405,8 +405,7 @@ class DiscreteDistAgent:
                 {
                     "rep/loss": float(loss.item()),
                     "rep/beta": info.get("beta_ema", 0.0),
-                    "step": self.steps,
-                }
+                }, step=self.steps
             )
         return {"rep_loss": float(loss.item()), **info}
 
@@ -438,8 +437,10 @@ class DiscreteDistAgent:
         episode_reward = 0.0
         episode_length = 0
         episode_count = 0
-
-        for self.steps in range(1, self.cfg.total_steps + 1):
+        self.steps = 0
+        
+        while self.steps <= self.cfg.total_steps:
+            self.steps += 1
             epsilon = self.epsilon_schedule.value(self.steps)
             if self.steps < self.cfg.warmup_steps:
                 action = self.env.action_space.sample()
@@ -461,8 +462,7 @@ class DiscreteDistAgent:
                         {
                             "train/episode_return": episode_reward,
                             "train/episode_length": episode_length,
-                            "step": self.steps,
-                        }
+                        }, step=self.steps
                     )
                 # Print every episode during warmup, every 10 episodes during training
                 if self.steps < self.cfg.warmup_steps or episode_count % 10 == 0:
