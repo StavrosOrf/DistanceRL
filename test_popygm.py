@@ -1,16 +1,22 @@
 """Utility script to evaluate DistAgent on POPGym POMDP benchmarks.
 
+NOTE: POPGym environments currently have discrete action spaces, but this script
+uses the continuous-control DistAgent. For discrete action spaces, consider using
+the DiscreteDistAgent from discreteDistRL module instead.
+
 This script instantiates the continuous-distance agent (``DistAgent``) on a
-collection of partially observable continuous-control tasks provided by the
-`popgym` suite.  The script mirrors the CLI from ``main.py`` but focuses on
-benchmark evaluation across multiple environments.
+collection of partially observable tasks provided by the `popgym` suite.
+The script mirrors the CLI from ``main.py`` but focuses on benchmark evaluation
+across multiple environments.
+
+WARNING: This script may not work correctly with POPGym environments as they
+use discrete action spaces. It's kept for reference/future continuous POPGym envs.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib
-from argparse import BooleanOptionalAction
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence
 
@@ -39,6 +45,8 @@ def _discover_sota_envs() -> List[str]:
     """
 
     candidates: List[str] = []
+    
+    # First, try to find environments from POPGym benchmark metadata
     module_attr_pairs = [
         ("popgym.benchmarks", "SOTA_POMDPS"),
         ("popgym.benchmarks", "SOTA_ENVS"),
@@ -77,15 +85,29 @@ def _discover_sota_envs() -> List[str]:
             if isinstance(item, str):
                 candidates.append(item)
 
+    # If no metadata found, query gymnasium registry for continuous control POPGym envs
+    if not candidates:
+        try:
+            import gymnasium as gym
+            # Get all registered POPGym environments that are continuous control
+            # (CartPole and Pendulum variants which have continuous action spaces)
+            all_envs = list(gym.envs.registry.keys())
+            continuous_keywords = ['CartPole', 'Pendulum']
+            for env_id in all_envs:
+                if 'popgym' in env_id.lower():
+                    if any(kw in env_id for kw in continuous_keywords):
+                        candidates.append(env_id)
+        except Exception:
+            pass  # Fall through to hardcoded defaults
+
     # Fall back to a minimal set of well-known POPGym continuous POMDP tasks if
     # no metadata could be recovered from the installed version. These IDs come
-    # from the original POPGym benchmark release and provide reasonable defaults
-    # for continuous-control testing.
+    # from the POPGym continuous control benchmark environments.
     if not candidates:
         candidates = [
-            "popgym-ContinuousCartPole-v0",
-            "popgym-TMaze-v0",
-            "popgym-Memory-v0",
+            "popgym-PositionOnlyCartPoleEasy-v0",
+            "popgym-PositionOnlyCartPoleMedium-v0",
+            "popgym-PositionOnlyPendulumEasy-v0",
         ]
 
     return sorted(set(candidates))
@@ -138,6 +160,37 @@ def _build_agent_kwargs(
 
 def evaluate_suite(env_ids: Sequence[str], args: argparse.Namespace) -> Dict[str, float]:
     """Train and evaluate the distance agent on each POPGym environment."""
+
+    import gymnasium as gym
+    
+    # Check if environments have continuous action spaces
+    print("\n[Check] Verifying action space compatibility...")
+    incompatible_envs = []
+    for env_id in env_ids[:3]:  # Check first 3 as representative sample
+        try:
+            env = gym.make(env_id)
+            if not isinstance(env.action_space, gym.spaces.Box):
+                incompatible_envs.append((env_id, type(env.action_space).__name__))
+            env.close()
+        except Exception as e:
+            print(f"[Warning] Could not check {env_id}: {e}")
+    
+    if incompatible_envs:
+        print("\n" + "="*80)
+        print("[ERROR] POPGym environments have DISCRETE action spaces!")
+        print("="*80)
+        print("\nThe DistAgent (dist_rl.dist_agent) is designed for CONTINUOUS action spaces.")
+        print("However, the following POPGym environments have discrete actions:\n")
+        for env_id, space_type in incompatible_envs:
+            print(f"  - {env_id}: {space_type}")
+        print("\n" + "="*80)
+        print("SOLUTION: Use DiscreteDistAgent from discreteDistRL module instead:")
+        print("  from discreteDistRL.dist_agent import DiscreteDistAgent")
+        print("="*80 + "\n")
+        raise SystemExit(
+            "Cannot use continuous-control DistAgent with discrete-action POPGym environments. "
+            "Please use DiscreteDistAgent or choose continuous-control environments."
+        )
 
     results: Dict[str, float] = {}
     config_overrides: Dict[str, float | int | None] = {}
@@ -194,15 +247,27 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--updates-per-step", type=int, default=1)
     parser.add_argument(
         "--kernel-adaptive-tau",
-        action=BooleanOptionalAction,
+        action="store_true",
         default=True,
-        help="Enable or disable adaptive kernel temperature scheduling.",
+        help="Enable adaptive kernel temperature scheduling (use --no-kernel-adaptive-tau to disable).",
+    )
+    parser.add_argument(
+        "--no-kernel-adaptive-tau",
+        action="store_false",
+        dest="kernel_adaptive_tau",
+        help="Disable adaptive kernel temperature scheduling.",
     )
     parser.add_argument(
         "--normalize-obs",
-        action=BooleanOptionalAction,
+        action="store_true",
         default=True,
-        help="Toggle observation normalization in DistAgent.",
+        help="Enable observation normalization in DistAgent (use --no-normalize-obs to disable).",
+    )
+    parser.add_argument(
+        "--no-normalize-obs",
+        action="store_false",
+        dest="normalize_obs",
+        help="Disable observation normalization in DistAgent.",
     )
     parser.add_argument("--warmup-steps", type=int, default=5_000)
     parser.add_argument("--eval-episodes", type=int, default=5)
