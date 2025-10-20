@@ -24,7 +24,7 @@ def data_fetcher():
     result_summary = []
     # use tqdm to display a progress bar
     # for project_name in ["DistRL_Exps", "DistRL_Rep"]:
-    for project_name in ["DistRL_Exps"]:
+    for project_name in ["DistRL_Rep"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")
         print(f"Total runs fetched: {len(runs)}")
@@ -47,7 +47,8 @@ def data_fetcher():
             env_id = config['env_id']
             seed = config['seed']
             
-            if env_id == 'Humanoid-v5':
+            if env_id in ['Hopper-v5', 'Swimmer-v5'] and algo == 'DistAgent':
+                print(f'Deleting run {run.id} - {env_id} with DistAgent')
                 run.delete()  # delete the run
                 continue
             else:

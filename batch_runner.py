@@ -45,8 +45,7 @@ def batch_runner():
 
     # resource configuration
     device = 'cuda' if partition != 'compute' else 'cpu'
-
-    cpu_cores = 1 if partition != 'compute' else 2
+    
     memory_per_cpu = '5300' if partition != 'compute' else '3800'
     batch_arg = '#SBATCH --gpus-per-task=1' if partition != 'compute' else '\n'
 
@@ -70,15 +69,14 @@ def batch_runner():
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in ['Humanoid-v5']:
-        
+    for env in ['Hopper-v5', 'Swimmer-v5']:        
         if env in ['Humanoid-v5']:
             cpu_cores = 3
         else:
             cpu_cores = 1
             
-        for algo in SB3_ALGOS:
-            # for algo in ['DistAgent']:
+        # for algo in SB3_ALGOS:
+        for algo in ['DistAgent']:
             for seed in seed_grid:
 
                 if algo == 'DistAgent':
@@ -95,6 +93,7 @@ def batch_runner():
                 training_steps = steps_per_env[env]
 
                 run_name = f"{algo}_seed{seed}"
+                run_name += f"_{env}"
                 print(f"Submitting {run_name}")
 
                 python_command = 'python main.py' + \
