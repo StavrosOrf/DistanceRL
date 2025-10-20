@@ -15,70 +15,80 @@ def data_fetcher():
     api = wandb.Api()
 
     # Replace 'your_project_name' and 'your_entity_name' with your actual project and entity
-    project_name = "DistRL_Rep"
+    project_name = "DistRL_Exps"  # DistRL_Rep
     entity_name = "stavrosorf"
-
-    # Fetch runs from the specified project
-    runs = api.runs(f"{entity_name}/{project_name}")
-    print(f"Total runs fetched: {len(runs)}")
 
     # Display the filtered runs with group names
 
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    for i, run in tqdm.tqdm(enumerate(runs), total=len(runs)):
+    # for project_name in ["DistRL_Exps", "DistRL_Rep"]:
+    for project_name in ["DistRL_Exps"]:
+        # Fetch runs from the specified project
+        runs = api.runs(f"{entity_name}/{project_name}")
+        print(f"Total runs fetched: {len(runs)}")
+        for i, run in tqdm.tqdm(enumerate(runs), total=len(runs)):
 
-        # Handle config - W&B wraps values in {"value": ...} format
-        config_raw = run.config
-        config = {}
-        config_raw = json.loads(config_raw)
+            # Handle config - W&B wraps values in {"value": ...} format
+            config_raw = run.config
+            config = {}
+            config_raw = json.loads(config_raw)
 
-        # Extract actual values from W&B format: {"key": {"value": actual_value}}
-        if isinstance(config_raw, dict):
-            for key, val in config_raw.items():
-                if isinstance(val, dict) and 'value' in val:
-                    config[key] = val['value']
-                else:
-                    config[key] = val
+            # Extract actual values from W&B format: {"key": {"value": actual_value}}
+            if isinstance(config_raw, dict):
+                for key, val in config_raw.items():
+                    if isinstance(val, dict) and 'value' in val:
+                        config[key] = val['value']
+                    else:
+                        config[key] = val
 
-        algo = config['algo']
-        env_id = config['env_id']
-        seed = config['seed']
+            algo = config['algo']
+            env_id = config['env_id']
+            seed = config['seed']
+            
+            if env_id == 'Humanoid-v5':
+                run.delete()  # delete the run
+                continue
+            else:
+                continue
 
-        if algo == 'SACDistanceAgentNew':
-            continue
+            if algo == 'SACDistanceAgentNew':
+                continue
 
-        print(
-            f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")
+            if algo in SB3_ALGOS and project_name != "DistRL_Exps":
+                continue
 
-        # data = extract_eval_rewards(run, algo, env_id, seed)
-        data = extract_eval_rewards_Faster(run, algo, env_id, seed)
-        
-        if data is None:
-            continue
+            print(
+                f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")
 
-        run_results = pd.concat([run_results, data], ignore_index=True)
+            # data = extract_eval_rewards(run, algo, env_id, seed)
+            data = extract_eval_rewards_Faster(run, algo, env_id, seed)
 
-        history = run.history()
-        if '_runtime' not in history:
-            print(f"Run {run.id} has no _runtime key")
-            continue
-        
-        best_reward = data['eval_reward'].max()
+            if data is None:
+                continue
 
-        if np.array(history["_runtime"])[-1]/3600 < 1:
-            continue
+            run_results = pd.concat([run_results, data], ignore_index=True)
 
-        results = {
-            "algorithm": algo,
-            "env": env_id,
-            "seed": seed,
-            "runtime": round(np.array(history["_runtime"])[-1]/3600, 2),
-            "best": best_reward
+            history = run.history()
+            if '_runtime' not in history:
+                print(f"Run {run.id} has no _runtime key")
+                continue
 
-        }
-        result_summary.append(results)
+            best_reward = data['eval_reward'].max()
+
+            if np.array(history["_runtime"])[-1]/3600 < 1:
+                continue
+
+            results = {
+                "algorithm": algo,
+                "env": env_id,
+                "seed": seed,
+                "runtime": round(np.array(history["_runtime"])[-1]/3600, 2),
+                "best": best_reward
+
+            }
+            result_summary.append(results)
 
     # Convert the results to a pandas DataFrame
     df = pd.DataFrame(result_summary)
@@ -86,8 +96,8 @@ def data_fetcher():
     print(df.shape)
 
     print(df.describe())
-    
-    #make directory if not exists
+
+    # make directory if not exists
     if not os.path.exists("./results_analysis/data"):
         os.makedirs("./results_analysis/data")
 
@@ -161,13 +171,13 @@ def extract_eval_rewards(run, algo, env, seed) -> pd.DataFrame:
 def extract_eval_rewards_Faster(run, algo, env, seed) -> pd.DataFrame:
     """
     Faster version: Extract evaluation rewards by fetching entire history at once.
-    
+
     Args:
         run: W&B run object
         algo: Algorithm name
         env: Environment name
         seed: Random seed
-        
+
     Returns:
         DataFrame with columns: step, eval_reward, algo, env, seed
     """
@@ -177,22 +187,22 @@ def extract_eval_rewards_Faster(run, algo, env, seed) -> pd.DataFrame:
     else:
         metric_name = 'eval/avg_reward'
         step_name = 'step'
-    
+
     try:
         # Fetch entire history at once - much faster than scan_history
         history = run.history(keys=[metric_name, step_name], pandas=True)
-        
+
         if history.empty:
             print(f"    Warning: No history data found for {run.name}")
             return None
-        
+
         # Filter out rows where metric is NaN
         history = history.dropna(subset=[metric_name])
-        
+
         if history.empty:
             print(f"    Warning: No evaluation data found for {run.name}")
             return None
-        
+
         # Rename columns to our standard format
         df = pd.DataFrame({
             'step': history[step_name],
@@ -201,16 +211,16 @@ def extract_eval_rewards_Faster(run, algo, env, seed) -> pd.DataFrame:
             'env': env,
             'seed': seed
         })
-        
+
         # Remove duplicate steps (keep first occurrence)
         df = df.drop_duplicates(subset=['step'], keep='first')
-        
+
         # Sort by step
         df = df.sort_values('step').reset_index(drop=True)
-        
+
         print(f"    Extracted {len(df)} evaluation points from {run.name}")
         return df
-        
+
     except Exception as e:
         print(f"    Error extracting data from {run.name}: {e}")
         return None

@@ -26,7 +26,7 @@ hours_per_env_sb3 = {
     'HalfCheetah-v5': 20,
     'Ant-v5': 20,
     'Hopper-v5': 12,
-    'Humanoid-v5': 30,
+    'Humanoid-v5': 45,
     'InvertedDoublePendulum-v5': 6,
     'InvertedPendulum-v5': 6,
     'Reacher-v5': 3,
@@ -63,13 +63,20 @@ def batch_runner():
     HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5',
                         'HalfCheetah-v5']
 
-    seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
+    # seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
+    seed_grid = [42, 32, 22, 12, 2]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in MUJOCO_ENVS:
+    for env in ['Humanoid-v5']:
+        
+        if env in ['Humanoid-v5']:
+            cpu_cores = 3
+        else:
+            cpu_cores = 1
+            
         for algo in SB3_ALGOS:
             # for algo in ['DistAgent']:
             for seed in seed_grid:
