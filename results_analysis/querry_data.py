@@ -23,8 +23,8 @@ def data_fetcher():
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    # for project_name in ["DistRL_Exps", "DistRL_Rep"]:
-    for project_name in ["DistRL_Exps"]:
+    for project_name in ["DistRL_Exps", "DistRL_Rep"]:
+    # for project_name in ["DistRL_Exps"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")
         print(f"Total runs fetched: {len(runs)}")
@@ -47,11 +47,11 @@ def data_fetcher():
             env_id = config['env_id']
             seed = config['seed']
             
-            if env_id == 'Humanoid-v5':
-                run.delete()  # delete the run
-                continue
-            else:
-                continue
+            # if env_id == 'Humanoid-v5':
+            #     run.delete()  # delete the run
+            #     continue
+            # else:
+            #     continue
 
             if algo == 'SACDistanceAgentNew':
                 continue

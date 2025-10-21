@@ -208,10 +208,7 @@ def visualize(csv_path: Path,
     envs = [env for env in envs if env not in drop_envs]
     
     
-    # Print data summary
-    if print_summary:
-        print_data_summary(df)
-        print_performance_tables(df)
+
 
     # Print max step per algo per env
     max_steps = df.groupby(['env', 'algo'])['step'].max().reset_index()
@@ -220,9 +217,16 @@ def visualize(csv_path: Path,
 
     if max_step is not None:
         df = df[df["step"] <= max_step]
+        
+        
+        # Print data summary
+    if print_summary:
+        print_data_summary(df)
+        print_performance_tables(df)
+        
     if 0.0 < ema_alpha < 1.0:
         df = apply_ema_smoothing(df, smoothing_weight=ema_alpha)
-        
+    
 
 
     sns.set_theme(style="whitegrid", context="talk", palette="tab10")
@@ -303,7 +307,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show", default=False, action="store_true", help="Display plots interactively")
     parser.add_argument("--ema-alpha", type=float, default=0.0,
                         help="EMA smoothing factor (0-1). Higher=more smoothing. 0=disabled. Recommended: 0.1-0.5")
-    parser.add_argument("--max-step", type=int, default=1_000_000,
+    parser.add_argument("--max-step", type=int, default=500_000,
                         help="Maximum training step to plot (set negative to include all)")
     parser.add_argument("--no-summary", action="store_true",
                         help="Disable printing dataset summary")
