@@ -61,6 +61,10 @@ def batch_runner():
 
     HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5',
                         'HalfCheetah-v5']
+    
+    # ENV_TO_RUN =  #all envs with more than 1M steps
+    ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] > 1_000_000]
+    print(f"Environments to run: {ENV_TO_RUN}")
 
     # seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
     seed_grid = [42, 32, 22, 12, 2]
@@ -69,7 +73,7 @@ def batch_runner():
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in ['Hopper-v5', 'Swimmer-v5']:        
+    for env in ENV_TO_RUN:        
         if env in ['Humanoid-v5']:
             cpu_cores = 3
         else:
@@ -86,7 +90,7 @@ def batch_runner():
                 if algo in SB3_ALGOS:
                     job_hours = hours_per_env_sb3[env]
                 else:
-                    job_hours = int(hours_per_env_sb3[env]*1.3)
+                    job_hours = int(hours_per_env_sb3[env]*1.5)
                     if job_hours > 45:
                         job_hours = 45
 
