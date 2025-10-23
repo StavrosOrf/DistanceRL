@@ -214,3 +214,7 @@ logs/
 saved_models/
 results_analysis/data/
 results_analysis/videos/
+results_analysis/plots/distrl_embeddings/
+results_analysis/plots/distrl_embeddings_3d/
+results_analysis/plots/distrl_creative/
+
