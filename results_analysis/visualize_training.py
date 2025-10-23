@@ -307,7 +307,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--show", default=False, action="store_true", help="Display plots interactively")
     parser.add_argument("--ema-alpha", type=float, default=0.0,
                         help="EMA smoothing factor (0-1). Higher=more smoothing. 0=disabled. Recommended: 0.1-0.5")
-    parser.add_argument("--max-step", type=int, default=10_000_000,
+    parser.add_argument("--max-step", type=int, default=500_000,
                         help="Maximum training step to plot (set negative to include all)")
     parser.add_argument("--no-summary", action="store_true",
                         help="Disable printing dataset summary")

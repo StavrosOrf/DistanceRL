@@ -38,7 +38,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="tqc") # DistAgent
+    parser.add_argument("--algo", type=str, default="DistAgent") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
     parser.add_argument("--K", type=int, default=16)
@@ -92,6 +92,8 @@ def main():
         exp_prefix = args.exp_prefix + "_" + datetime.now().strftime("%m%d_%H%M%S")
         group_name = args.group_name + args.env_id
 
+    args.exp_prefix = exp_prefix
+    
     model_save_path = Path(args.save_dir) / exp_prefix
     model_save_path.mkdir(parents=True, exist_ok=True)
     args.model_save_path = str(model_save_path)

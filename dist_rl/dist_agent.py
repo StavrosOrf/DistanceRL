@@ -36,6 +36,7 @@ class DistAgent:
                  rep_huber: float,
                  normalize_obs: int,
                  warmup_steps: int,
+                 exp_prefix: str,
                  alpha: Optional[float],
                  save_dir: str,
                  **kwargs):
@@ -48,6 +49,8 @@ class DistAgent:
         self.noise_std = expl_sigma
 
         self.normalize_obs = True if normalize_obs != 0 else False
+        
+        self.exp_prefix = exp_prefix
 
         self.device = device
         self.env = gym.make(env_id)
@@ -491,7 +494,7 @@ class DistAgent:
     def _save(self, name: str):
         import os
         os.makedirs(self.save_dir, exist_ok=True)
-        path = os.path.join(self.save_dir, f"{name}.pt")
+        path = os.path.join(self.save_dir, self.exp_prefix, f"{name}.pt")
         torch.save({
             "actor": self.actor.state_dict(),
             "qnet": self.qnet.state_dict(),
