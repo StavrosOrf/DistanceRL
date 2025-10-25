@@ -10,6 +10,23 @@ SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 
 os.environ['WANDB_HTTP_TIMEOUT'] = '300'
 
+MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
+                   'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']  # number of envs: 9
+
+steps_per_env = {
+    'HalfCheetah-v5': 5_000_000,
+    'Ant-v5': 5_000_000,
+    'Hopper-v5': 3_000_000,
+    'Humanoid-v5': 10_000_000,
+    'InvertedDoublePendulum-v5': 500_000,
+    'InvertedPendulum-v5': 500_000,
+    'Reacher-v5': 500_000,
+    'Swimmer-v5': 1_000_000,
+    'Walker2d-v5': 5_000_000,
+}
+
+ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] >= 1_000_000]
+
 
 def data_fetcher():
     api = wandb.Api()
@@ -52,6 +69,9 @@ def data_fetcher():
             #     continue
             # else:
             #     continue
+
+            if project_name == "DistRL_Rep" and algo == 'DistAgent' and env_id in ENV_TO_RUN:
+                continue
 
             if algo == 'SACDistanceAgentNew':
                 continue
