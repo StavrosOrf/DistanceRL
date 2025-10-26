@@ -219,4 +219,5 @@ results_analysis/plots/distrl_embeddings_3d/
 results_analysis/plots/distrl_creative/
 results_analysis/plots/policy_analysis/
 results_analysis/plots/representation_geometry/
+results_analysis/plots/gradient_flow/
 
