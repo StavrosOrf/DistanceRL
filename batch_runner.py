@@ -63,11 +63,13 @@ def batch_runner():
                         'HalfCheetah-v5']
     
     # ENV_TO_RUN =  #all envs with more than 1M steps
-    ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] > 1_000_000]
+    # ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] > 1_000_000]
+    ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] > 1_000]
     print(f"Environments to run: {ENV_TO_RUN}")
 
     # seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
-    seed_grid = [42, 32, 22, 12, 2]
+    # seed_grid = [42, 32, 22, 12, 2]
+    seed_grid = [82, 72, 62, 52, 92]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):
