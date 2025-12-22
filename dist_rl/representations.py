@@ -27,23 +27,23 @@ def recursive_nstep_cosine_loss_ema(
     z = F.normalize(embeddings, p=2, dim=1)
     z_next = F.normalize(next_embeddings, p=2, dim=1)
 
-    S = z @ z.T
-    S_next = z_next @ z_next.T
+    S = z @ z.T # cosine similarities
+    S_next = z_next @ z_next.T # cosine similarities
 
-    u = nreturns.view(-1, 1)
-    G = (u - u.T).abs()
+    u = nreturns.view(-1, 1) 
+    G = (u - u.T).abs() # utility gap matrix    
     with torch.no_grad():
         beta_batch = torch.quantile(G.reshape(-1), 0.95) + 1e-6
         beta = embeddings.new_tensor(beta_ema.update(beta_batch) if beta_ema is not None else beta_batch)
     Delta = (G / beta).clamp(0., 1.)
-    T = 1.0 - 2.0 * (Delta ** float(gamma_shape))
+    T = 1.0 - 2.0 * (Delta ** float(gamma_shape)) # shaped targets in [-1, 1]
 
     alive = (1.0 - dones.view(-1, 1)).to(S.dtype)
-    Y = (1.0 - lam) * T + lam * alive * (discount * S_next)
+    Y = (1.0 - lam) * T + lam * alive * (discount * S_next) # (B, B) target matrix
 
     mask = torch.ones_like(S, dtype=torch.bool)
     mask.fill_diagonal_(False)
-    err = (S - Y)[mask]
+    err = (S - Y)[mask] # exclude diagonal terms
     loss = F.smooth_l1_loss(err, torch.zeros_like(err), beta=huber_delta, reduction='mean')
 
     info = {

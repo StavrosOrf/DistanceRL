@@ -7,6 +7,10 @@ import json
 # Initialize API
 import os
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
+ABLATION_ALGOS = [
+    "DistAblationA1", "DistAblationA2", "DistAblationA3", "DistAblationA4", "DistAblationA5",
+    "DistAblationB1", "DistAblationB2", "DistAblationB3", "DistAblationB4", "DistAblationB5",
+]
 
 os.environ['WANDB_HTTP_TIMEOUT'] = '300'
 
@@ -40,7 +44,7 @@ def data_fetcher():
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    for project_name in ["DistRL_Exps", "DistRL_Rep"]:
+    for project_name in ["DistRL_Exps", "DistRL_Rep", "DistRL_Ablations"]:
     # for project_name in ["DistRL_Exps"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")
@@ -78,6 +82,10 @@ def data_fetcher():
 
             if algo in SB3_ALGOS and project_name != "DistRL_Exps":
                 continue
+
+            # Allow ablation algos to pass through regardless of project
+            if algo in ABLATION_ALGOS:
+                pass
 
             print(
                 f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")

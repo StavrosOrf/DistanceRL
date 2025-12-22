@@ -7,6 +7,21 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
+from dist_rl.ablations.agents import (
+    DistAblationA1RandomEncoder,
+    DistAblationA2ActorOnlyEncoder,
+    DistAblationA3NoTemporalMix,
+    DistAblationA4NoBetaScaling,
+    DistAblationA5GammaFixed,
+    DistAblationB1UniformKernel,
+    DistAblationB2EuclideanSim,
+    DistAblationB3NoCentering,
+    DistAblationB4CriticArgmax,
+    DistAblationB5FixedK,
+    DistAblationB6PoincareSim,
+    DistAblationB7LaplacianKernel,
+    DistAblationB8BilinearSim,
+)
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import set_seed
 
@@ -17,6 +32,22 @@ BOX2D_ENVS = ['LunarLanderContinuous-v3',
               'MountainCarContinuous-v0', 'Pendulum-v1']  # number of envs: 3
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
+
+ABLATION_AGENTS = {
+    "DistAblationA1": DistAblationA1RandomEncoder,
+    "DistAblationA2": DistAblationA2ActorOnlyEncoder,
+    "DistAblationA3": DistAblationA3NoTemporalMix,
+    "DistAblationA4": DistAblationA4NoBetaScaling,
+    "DistAblationA5": DistAblationA5GammaFixed,
+    "DistAblationB1": DistAblationB1UniformKernel,
+    "DistAblationB2": DistAblationB2EuclideanSim,
+    "DistAblationB3": DistAblationB3NoCentering,
+    "DistAblationB4": DistAblationB4CriticArgmax,
+    "DistAblationB5": DistAblationB5FixedK,
+    "DistAblationB6": DistAblationB6PoincareSim,
+    "DistAblationB7": DistAblationB7LaplacianKernel,
+    "DistAblationB8": DistAblationB8BilinearSim,
+}
 
 
 def main():
@@ -61,6 +92,8 @@ def main():
     parser.add_argument('--rep-gamma-shape', type=float, default=0.5)
     parser.add_argument('--rep-lam', type=float, default=0.5)
     parser.add_argument('--rep-huber', type=float, default=0.2)
+    parser.add_argument('--rep-fixed-scale', type=float, default=1.0,
+                        help='Fixed beta scale for A4 ablation (ignored otherwise).')
 
     parser.add_argument('--normalize-obs', type=int, default=1,
                         help='Whether to normalize observations (1=True, 0=False).')
@@ -73,6 +106,8 @@ def main():
     parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
+    parser.add_argument('--fixed-K', dest='fixed_K', type=int, default=64,
+                        help='Fixed K for B5 ablation (ignored otherwise).')
 
     args = parser.parse_args()
 
@@ -118,12 +153,14 @@ def main():
         f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
 
     if args.algo == "DistAgent" and args.env_id in continuous_envs:
-
         agent = DistAgent(**args.__dict__)
-
         print(f'Running {args.algo} with kernel policy updates.')
         agent.train()
-
+    elif args.algo in ABLATION_AGENTS and args.env_id in continuous_envs:
+        agent_cls = ABLATION_AGENTS[args.algo]
+        agent = agent_cls(**args.__dict__)
+        print(f'Running {args.algo} ablation agent on {args.env_id}.')
+        agent.train()
     else:
         agent = train_sb3_agent(**args.__dict__)
 

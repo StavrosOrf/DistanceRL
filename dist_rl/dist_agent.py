@@ -121,7 +121,7 @@ class DistAgent:
         self.rep_huber = rep_huber
         self.beta_ema = BetaEMA(decay=0.995)
 
-        # self.alpha_min = 0.02                    # floor to keep some exploration
+        # floor to keep some exploration
         self.max_grad_norm = 5
         self.steps = 0
         self.warmup_steps = warmup_steps
@@ -131,7 +131,7 @@ class DistAgent:
         if wandb.run is not None:
             wandb.run.log_code(".")
 
-        print("[Init] SACDistanceAgent setup complete")
+        print("[Init] DistanceAgent setup complete")
         print(
             f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
         print(f'Normalize obs: {self.normalize_obs}')
@@ -241,7 +241,6 @@ class DistAgent:
                        (logp + self.target_entropy).detach()).mean()
 
         logs = {
-            # "kernel/top_state_sim_mean": float(top_vals.mean().item()),
             "kernel/aux_term": float(-Qhat.mean().item()),
             "train/actor_entropy_loss": float(entropy_loss.item())}
 
@@ -371,11 +370,11 @@ class DistAgent:
             tau_row = torch.full((B, 1), tau_sched, device=device)
 
         return tau_row  # (B,1)
+    
     # ---------- training ----------
-
     def train(self):
         print(
-            f"[Train] Starting SAC training for {self.total_steps} steps (eval every {self.eval_freq})")
+            f"[Train] Starting training for {self.total_steps} steps (eval every {self.eval_freq})")
         o, _ = self.env.reset(seed=None)
         ep_r = 0.0
         ep_len = 0
@@ -429,7 +428,7 @@ class DistAgent:
                 obs, next_obs, act_env, rew, done_b = self.replay.get_batch(
                     self.batch_size)
 
-                # ---- Q update (separate encoders) ----
+                # ---- Q update ----
                 loss_q, qinfo = self._q_loss(
                     obs, act_env, rew, next_obs, done_b)
                 self.optim_q.zero_grad()
@@ -440,8 +439,8 @@ class DistAgent:
                 if wandb.run is not None:
                     wandb.log({**qinfo, "train/q_loss": float(loss_q.item()),
                                "train/q_grad_norm": float(q_grad_norm)}, step=self.steps)
-
-
+                
+                # ---- Rep update ----
                 rep_loss, rep_info = self._rep_loss(
                     obs, act_env, next_obs, done_b)
                 self.optim_rep.zero_grad()
@@ -454,7 +453,8 @@ class DistAgent:
                     {"rep/loss": float(rep_loss.item()), "step": self.steps})
                 if wandb.run is not None:
                     wandb.log(rep_logs, step=self.steps)
-
+                
+                # ---- Actor + alpha update ----
                 actor_loss, alpha_loss = self._actor_alpha_loss(obs)
 
                 self.optim_actor.zero_grad()
@@ -467,6 +467,7 @@ class DistAgent:
                     "train/actor_loss": float(actor_loss.item()),
                     "train/actor_grad_norm": float(actor_grad_norm),
                     "step": self.steps}
+                
                 if alpha_loss is not None:
                     self.alpha_opt.zero_grad()
                     alpha_loss.backward()
@@ -483,7 +484,7 @@ class DistAgent:
                 if wandb.run is not None:
                     wandb.log(logs, step=self.steps)
 
-                # targets
+                # soft updates of target networks
                 polyak_update(self.q_targ, self.qnet, self.tau)
                 polyak_update(self.rep_trunk_targ, self.rep_trunk, self.tau)
 
