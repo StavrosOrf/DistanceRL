@@ -8,11 +8,13 @@ from dist_rl.ablations.agents import (
 	DistAblationB2EuclideanSim,
 	DistAblationB3NoCentering,
 	DistAblationB4CriticArgmax,
-	DistAblationB5FixedK,
 	DistAblationB6PoincareSim,
 	DistAblationB7LaplacianKernel,
-	DistAblationB8BilinearSim,
-)
+	DistAblationB8BilinearSim,)
+
+from dist_rl.baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
+from dist_rl.baselines.mico_agent import MICoAgent
+from dist_rl.dist_agent import DistAgent
 
 __all__ = [
 	"DistAblationA1RandomEncoder",
@@ -24,8 +26,11 @@ __all__ = [
 	"DistAblationB2EuclideanSim",
 	"DistAblationB3NoCentering",
 	"DistAblationB4CriticArgmax",
-	"DistAblationB5FixedK",
 	"DistAblationB6PoincareSim",
 	"DistAblationB7LaplacianKernel",
 	"DistAblationB8BilinearSim",
+	"DBCAgent",
+	"DBCDeterministicAgent",
+	"MICoAgent",
+	"DistAgent",
 ]

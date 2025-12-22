@@ -594,30 +594,3 @@ class DistAblationB4CriticArgmax(DistAgent):
         a_anchor, logp, _ = self.actor.sample(obs_n)
         Qhat = q_max  # (B,1)
         return Qhat, logp
-
-
-class DistAblationB5FixedK(DistAgent):
-    """B5: Fix K to a constant (default 64) across tasks."""
-
-    def __init__(self, *args, **kwargs):
-        self.fixed_K = kwargs.pop("fixed_K", 64)
-        super().__init__(*args, **kwargs)
-        self.K = self.fixed_K
-
-    # Use base implementation but respect fixed K by overriding caller
-    def _actor_alpha_loss(self, obs):
-        Qhat, logp = self._qhat_in_state_norm(obs,
-                                              K=self.K,
-                                              noise_std=self.noise_std,
-                                              softmax_temp=1.0,
-                                              eps=0.05)
-        alpha = self.log_alpha.exp()
-        entropy_loss = (alpha * logp).mean()
-        actor_loss = entropy_loss - Qhat.mean()
-        alpha_loss = -(self.log_alpha * (logp + self.target_entropy).detach()).mean()
-        logs = {
-            "kernel/aux_term": float(-Qhat.mean().item()),
-            "train/actor_entropy_loss": float(entropy_loss.item())}
-        if wandb.run is not None:
-            wandb.log(logs, step=self.steps)
-        return actor_loss, alpha_loss

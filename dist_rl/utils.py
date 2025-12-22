@@ -79,15 +79,15 @@ class RolloutBuffer:
         if self.ptr >= self.max_size:
             self.ptr = 0  # Overwrite when buffer is full
 
-        self.obs[self.ptr] = torch.tensor(
+        self.obs[self.ptr] = torch.as_tensor(
             obs, dtype=torch.float32, device=self.device)
-        self.next_obs[self.ptr] = torch.tensor(
+        self.next_obs[self.ptr] = torch.as_tensor(
             next_obs, dtype=torch.float32, device=self.device)
-        self.actions[self.ptr] = torch.tensor(
+        self.actions[self.ptr] = torch.as_tensor(
             action, dtype=torch.float32, device=self.device)
-        self.rewards[self.ptr] = torch.tensor(
+        self.rewards[self.ptr] = torch.as_tensor(
             reward, dtype=torch.float32, device=self.device)
-        self.dones[self.ptr] = torch.tensor(
+        self.dones[self.ptr] = torch.as_tensor(
             done, dtype=torch.float32, device=self.device)
 
     def get_batch(self, batch_size: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:        
@@ -104,3 +104,7 @@ class RolloutBuffer:
             self.rewards[idxs].detach(),
             self.dones[idxs].detach(),
         )
+
+    # alias for compatibility
+    def sample(self, batch_size: int):
+        return self.get_batch(batch_size)

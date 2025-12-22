@@ -7,6 +7,8 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
+from dist_rl.baselines.mico_agent import MICoAgent
+from dist_rl.baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
 from dist_rl.ablations.agents import (
     DistAblationA1RandomEncoder,
     DistAblationA2ActorOnlyEncoder,
@@ -17,7 +19,6 @@ from dist_rl.ablations.agents import (
     DistAblationB2EuclideanSim,
     DistAblationB3NoCentering,
     DistAblationB4CriticArgmax,
-    DistAblationB5FixedK,
     DistAblationB6PoincareSim,
     DistAblationB7LaplacianKernel,
     DistAblationB8BilinearSim,
@@ -33,7 +34,11 @@ BOX2D_ENVS = ['LunarLanderContinuous-v3',
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
-ABLATION_AGENTS = {
+AGENTS = {
+    "DistAgent": DistAgent,
+    "MICo": MICoAgent,
+    "DBC": DBCAgent,
+    "DBCDet": DBCDeterministicAgent,
     "DistAblationA1": DistAblationA1RandomEncoder,
     "DistAblationA2": DistAblationA2ActorOnlyEncoder,
     "DistAblationA3": DistAblationA3NoTemporalMix,
@@ -43,7 +48,6 @@ ABLATION_AGENTS = {
     "DistAblationB2": DistAblationB2EuclideanSim,
     "DistAblationB3": DistAblationB3NoCentering,
     "DistAblationB4": DistAblationB4CriticArgmax,
-    "DistAblationB5": DistAblationB5FixedK,
     "DistAblationB6": DistAblationB6PoincareSim,
     "DistAblationB7": DistAblationB7LaplacianKernel,
     "DistAblationB8": DistAblationB8BilinearSim,
@@ -69,7 +73,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistAgent") # DistAgent
+    parser.add_argument("--algo", type=str, default="DBCDet") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
     parser.add_argument("--K", type=int, default=16)
@@ -106,8 +110,6 @@ def main():
     parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
-    parser.add_argument('--fixed-K', dest='fixed_K', type=int, default=64,
-                        help='Fixed K for B5 ablation (ignored otherwise).')
 
     args = parser.parse_args()
 
@@ -152,14 +154,10 @@ def main():
     print(
         f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
 
-    if args.algo == "DistAgent" and args.env_id in continuous_envs:
-        agent = DistAgent(**args.__dict__)
-        print(f'Running {args.algo} with kernel policy updates.')
-        agent.train()
-    elif args.algo in ABLATION_AGENTS and args.env_id in continuous_envs:
-        agent_cls = ABLATION_AGENTS[args.algo]
+
+    if args.algo in AGENTS and args.env_id in continuous_envs:
+        agent_cls = AGENTS[args.algo]
         agent = agent_cls(**args.__dict__)
-        print(f'Running {args.algo} ablation agent on {args.env_id}.')
         agent.train()
     else:
         agent = train_sb3_agent(**args.__dict__)

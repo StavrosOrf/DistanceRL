@@ -20,7 +20,10 @@ ABLATION_ALGOS = [
     # "DistAblationB5",
     # "DistAblationB6",
     # "DistAblationB7",
-    "DistAblationB8",
+    # "DistAblationB8",
+    # "DBC",
+    # "DBCDet",
+    "MICo",
 ]
 
 # Minimal, low-memory run settings
@@ -39,7 +42,6 @@ BASE_CMD = [
     "--normalize-obs", "1",
     "--expl-sigma", "0.2",
     "--rep-fixed-scale", "1.0",
-    "--fixed-K", "64",
 ]
 
 
