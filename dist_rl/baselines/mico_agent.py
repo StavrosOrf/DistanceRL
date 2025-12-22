@@ -165,6 +165,7 @@ class MICoAgent:
                  z_dim: int = 50,
                  mico_weight: float = 1e-5,
                  mico_beta: float = 0.1,
+                 reward_scale: float = 0.1,
                  warmup_steps: int = 10_000,
                  normalize_obs: int = 1,
                  exp_prefix: str = "exp",
@@ -201,6 +202,7 @@ class MICoAgent:
         # MICo params
         self.mico_weight = float(mico_weight)
         self.mico_beta = float(mico_beta)
+        self.reward_scale = float(reward_scale)
 
         # Entropy
         self.target_entropy = -float(target_entropy_scale) * float(self.act_dim)
@@ -291,7 +293,7 @@ class MICoAgent:
 
     def _update(self) -> MICoLossInfo:
         obs, act, next_obs, rew, done = self._sample_batch()
-        rew = rew.view(-1, 1)
+        rew = (rew * self.reward_scale).view(-1, 1)
         done = done.view(-1, 1)
         B = obs.shape[0]
 
@@ -300,7 +302,8 @@ class MICoAgent:
             next_actor_z, next_critic_z = self.encoder_t(next_obs)
             next_a, next_logp, _ = self.actor_t.sample(next_actor_z)
             q1_t, q2_t = self.critic_t(next_critic_z, next_a)
-            q_t = torch.min(q1_t, q2_t) - self.alpha * next_logp
+            alpha_detached = self.alpha.detach()
+            q_t = torch.min(q1_t, q2_t) - alpha_detached * next_logp
             backup = rew + (1.0 - done) * self.gamma * q_t
 
         # ---- Critic loss (online) ----
@@ -316,7 +319,7 @@ class MICoAgent:
             _, critic_z_frozen = self.encoder(obs)
         q1_pi, q2_pi = self.critic(critic_z_frozen, a_pi)
         q_pi = torch.min(q1_pi, q2_pi)
-        policy_loss = (self.alpha * logp_pi - q_pi).mean()
+        policy_loss = (alpha_detached * logp_pi - q_pi).mean()
 
         # ---- Alpha loss (stop-grad entropy diffs) ----
         entropy_diffs = (-logp_pi - self.target_entropy)
@@ -338,16 +341,14 @@ class MICoAgent:
 
         mico_loss = F.huber_loss(online_dist, target_dist, reduction="mean", delta=1.0)
 
-        # ---- Combined loss (SAC terms exclude alpha; alpha optimized separately) ----
-        sac_loss = 0.5 * critic_loss + 1.0 * policy_loss
+        # ---- Combined loss (match JAX: include alpha term, single backward) ----
+        sac_loss = 0.5 * critic_loss + 1.0 * policy_loss + 1.0 * alpha_loss
         total_loss = (1.0 - self.mico_weight) * sac_loss + self.mico_weight * mico_loss
 
         self.net_opt.zero_grad(set_to_none=True)
+        self.alpha_opt.zero_grad(set_to_none=True)
         total_loss.backward()
         self.net_opt.step()
-
-        self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
         self.alpha_opt.step()
 
         # target update (EMA)
@@ -405,6 +406,11 @@ class MICoAgent:
             self.steps += 1
 
             if done or trunc:
+                if wandb.run is not None:
+                    wandb.log({
+                        "rollout/ep_reward": ep_ret,
+                        "rollout/ep_len": ep_len,
+                    }, step=self.steps)
                 o, _ = self.env.reset()
                 ep_ret = 0.0
                 ep_len = 0
@@ -429,4 +435,4 @@ class MICoAgent:
                 avg = self.evaluate()
                 print(f"[Eval] step={self.steps} avg_return={avg:.2f}")
                 if wandb.run is not None:
-                    wandb.log({"eval/return": avg}, step=self.steps)
+                    wandb.log({"eval/avg_reward": avg}, step=self.steps)

@@ -278,7 +278,7 @@ class DiscreteDistAgent:
         max_return = float(np.max(returns))
         print(f"[Eval] Mean: {mean_return:.2f} ± {std_return:.2f} (Min: {min_return:.2f}, Max: {max_return:.2f})")
         if wandb.run is not None:
-            wandb.log({"eval/return": mean_return}, step=self.steps)
+            wandb.log({"eval/avg_reward": mean_return}, step=self.steps)
         return mean_return
 
     def _update_critics(self, batch: Dict[str, torch.Tensor]) -> float:

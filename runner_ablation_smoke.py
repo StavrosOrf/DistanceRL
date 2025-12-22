@@ -21,8 +21,8 @@ ABLATION_ALGOS = [
     # "DistAblationB6",
     # "DistAblationB7",
     # "DistAblationB8",
-    # "DBC",
-    # "DBCDet",
+    "DBC",
+    "DBCDet",
     "MICo",
 ]
 

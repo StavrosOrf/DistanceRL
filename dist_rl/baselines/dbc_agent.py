@@ -182,6 +182,7 @@ class _DBCBase:
                  expl_sigma: float = 0.1,
                  target_entropy_scale: float = 1.0,
                  z_dim: int = 50,
+                 reward_scale: float = 0.1,
                  use_mico: bool = False,
                  warmup_steps: int = 10_000,
                  normalize_obs: int = 1,
@@ -212,6 +213,7 @@ class _DBCBase:
         self.lr = float(lr)
         self.noise_std = float(expl_sigma)
         self.warmup_steps = int(warmup_steps)
+        self.reward_scale = float(reward_scale)
 
         self.normalize_obs = True if int(normalize_obs) != 0 else False
         self.obs_rms = RunningMeanStd(self.obs_dim, device=self.device)
@@ -300,9 +302,10 @@ class _DBCBase:
         with torch.no_grad():
             next_actor_z, next_critic_z = self.encoder_t(next_obs)
             next_a, next_logp, _ = self.actor_t.sample(next_actor_z)
+            alpha_detached = self.alpha.detach()
             q1_t, q2_t = self.critic_t(next_critic_z, next_a)
-            q_t = torch.min(q1_t, q2_t) - self.alpha * next_logp
-            backup = rew + (1.0 - done) * self.gamma * q_t
+            q_t = torch.min(q1_t, q2_t) - alpha_detached * next_logp
+            backup = (rew * self.reward_scale) + (1.0 - done) * self.gamma * q_t
 
         # encoder is NOT updated by SAC (matches original)
         with torch.no_grad():
@@ -315,17 +318,17 @@ class _DBCBase:
         a_pi, logp_pi, _ = self.actor.sample(actor_z_pi)
         q1_pi, q2_pi = self.critic(critic_z_pi, a_pi)
         q_pi = torch.min(q1_pi, q2_pi)
-        policy_loss = (self.alpha * logp_pi - q_pi).mean()
+        policy_loss = (alpha_detached * logp_pi - q_pi).mean()
 
         entropy_diffs = (-logp_pi - self.target_entropy)
         alpha_loss = (self.log_alpha * entropy_diffs.detach()).mean()
 
+        # Single backward including alpha term to avoid graph reuse
+        total_loss = 0.5 * critic_loss + policy_loss + alpha_loss
         self.net_opt.zero_grad(set_to_none=True)
-        (0.5 * critic_loss + policy_loss).backward()
-        self.net_opt.step()
-
         self.alpha_opt.zero_grad(set_to_none=True)
-        alpha_loss.backward()
+        total_loss.backward()
+        self.net_opt.step()
         self.alpha_opt.step()
 
         return critic_loss.detach(), policy_loss.detach(), alpha_loss.detach()
@@ -415,6 +418,8 @@ class _DBCBase:
 
     def train(self):
         o, _ = self.env.reset()
+        ep_ret = 0.0
+        ep_len = 0
 
         while self.steps < self.total_steps:
             obs_t = torch.as_tensor(o, device=self.device, dtype=torch.float32).unsqueeze(0)
@@ -450,11 +455,20 @@ class _DBCBase:
                 float(r),
                 float(done_f),
             )
+            ep_ret += float(r)
+            ep_len += 1
             self.steps += 1
 
             # episode reset
             if done or trunc:
+                if wandb.run is not None:
+                    wandb.log({
+                        "rollout/ep_reward": ep_ret,
+                        "rollout/ep_len": ep_len,
+                    }, step=self.steps)
                 o, _ = self.env.reset()
+                ep_ret = 0.0
+                ep_len = 0
             else:
                 o = o2
 
