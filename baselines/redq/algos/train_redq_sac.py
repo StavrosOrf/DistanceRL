@@ -155,6 +155,7 @@ class REDQMainAgent:
             self.steps += 1
 
             if done or trunc or time_limit:
+                print(f"[REDQ] Rollout finished: ep_ret={ep_ret:.2f}, ep_len={ep_len}")
                 self._log_rollout(ep_ret, ep_len)
                 o = _unwrap_reset(self.env)
                 ep_ret = 0.0

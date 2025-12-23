@@ -11,7 +11,7 @@ rm -rf "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null
 import os
 import time
 
-device = "cuda"  # "cpu" or "cuda"
+device = "cuda:1"  # "cpu" or "cuda"
 eval_episodes = 10
 batch_size = 256
 total_steps = 1_000_000
@@ -40,58 +40,76 @@ BOX2D_ENVS = ['LunarLanderContinuous-v3',
               'MountainCarContinuous-v0', 'Pendulum-v1']
 CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1']
 
-PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
-# PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
+# PYTHON_ENV = "/home/sorfanouda/anaconda3/envs/dt/bin/python"
+PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
-# for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
-for algo in ['SACDistanceDiffusionAgent']:  # 'DistAgent'
-    for env in ['HalfCheetah-v5']:
-        for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
-            rep_gamma_shape = v_gamma
-            for kernel_aux_weight in [100]:  # 0.0, 0.1
-                for lr in [1e-3]:
-                    for hidden_size in [256]:
-                        for seed in [42]:
+# # for envs in ['Pendulum-v1', 'MountainCarContinuous-v0','LunarLanderContinuous-v3,"Hopper-v5"]:
+# for algo in ['SACDistanceDiffusionAgent']:  # 'DistAgent'
+#     for env in ['HalfCheetah-v5']:
+#         for v_gamma in [0.5]:  # 0.99, 0.95, 1.0
+#             rep_gamma_shape = v_gamma
+#             for kernel_aux_weight in [100]:  # 0.0, 0.1
+#                 for lr in [1e-3]:
+#                     for hidden_size in [256]:
+#                         for seed in [42]:
 
-                            # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
+#                             # name = f"gamma-{v_gamma}-lr={lr}-seed={seed}"
 
-                            # +  '-' + name
-                            name = f'PullWeight1.5-{algo}-K{K}'
+#                             # +  '-' + name
+#                             name = f'PullWeight1.5-{algo}-K{K}'
 
-                            command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
-                                f' --env-id {env}' + \
-                                f' --algo {algo}' + \
-                                f' --device {device}' + \
-                                f' --batch-size {batch_size}' + \
-                                f' --K {K}' + \
-                                f' --v_gamma {v_gamma}' + \
-                                f' --lr {lr}' + \
-                                f' --hidden-size {hidden_size}' + \
-                                f' --total-steps {total_steps}' + \
-                                f' --buffer-size 1_000_000' + \
-                                f' --seed {seed}' + \
-                                f' --exp-prefix {name}' + \
-                                f' --eval-episodes {eval_episodes}' + \
-                                f' --eval-freq {eval_freq}' + \
-                                f' --policy-training-start 10_000' + \
-                                f' --val-training-start 10_000' + \
-                                f' --comp-samples {comp_samples}' + \
-                                f' --rep-gamma-shape {rep_gamma_shape}' + \
-                                f' --rep-loss-weight {rep_loss_weight}' + \
-                                f' --updates-per-step {updates_per_step}' + \
-                                f' --target-entropy-scale {target_entropy_scale}' + \
-                                f' --alpha-cql {alpha_cql}' + \
-                                f' --kernel-aux-weight {kernel_aux_weight}' + \
-                                f' --kernel-temp {kernel_temp}' + \
-                                f' --kernel-cand {kernel_cand}' + \
-                                f' --kernel-state-k {kernel_state_k}' + \
-                                f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
-                                f' --ot-eta {ot_eta}' + \
-                                f' --noise-type {noise_type}' + \
-                                ' --log_to_wandb' + \
-                                f' --expl-sigma {expl_sigma}' + \
-                                '" Enter'
+#                             command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+#                                 f' --env-id {env}' + \
+#                                 f' --algo {algo}' + \
+#                                 f' --device {device}' + \
+#                                 f' --batch-size {batch_size}' + \
+#                                 f' --K {K}' + \
+#                                 f' --v_gamma {v_gamma}' + \
+#                                 f' --lr {lr}' + \
+#                                 f' --hidden-size {hidden_size}' + \
+#                                 f' --total-steps {total_steps}' + \
+#                                 f' --buffer-size 1_000_000' + \
+#                                 f' --seed {seed}' + \
+#                                 f' --exp-prefix {name}' + \
+#                                 f' --eval-episodes {eval_episodes}' + \
+#                                 f' --eval-freq {eval_freq}' + \
+#                                 f' --policy-training-start 10_000' + \
+#                                 f' --val-training-start 10_000' + \
+#                                 f' --comp-samples {comp_samples}' + \
+#                                 f' --rep-gamma-shape {rep_gamma_shape}' + \
+#                                 f' --rep-loss-weight {rep_loss_weight}' + \
+#                                 f' --updates-per-step {updates_per_step}' + \
+#                                 f' --target-entropy-scale {target_entropy_scale}' + \
+#                                 f' --alpha-cql {alpha_cql}' + \
+#                                 f' --kernel-aux-weight {kernel_aux_weight}' + \
+#                                 f' --kernel-temp {kernel_temp}' + \
+#                                 f' --kernel-cand {kernel_cand}' + \
+#                                 f' --kernel-state-k {kernel_state_k}' + \
+#                                 f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
+#                                 f' --ot-eta {ot_eta}' + \
+#                                 f' --noise-type {noise_type}' + \
+#                                 ' --log_to_wandb' + \
+#                                 f' --expl-sigma {expl_sigma}' + \
+#                                 '" Enter'
 
-                            os.system(command=command)
-                            print(command)
-                            time.sleep(3)
+#                             os.system(command=command)
+#                             print(command)
+#                             time.sleep(3)
+
+
+# --- REDQ launcher with defaults and wandb logging ---
+for env in ['Walker2d-v5','Humanoid-v5','Ant-v5']:  # MUJOCO_ENVS:
+    for seed in [0]:
+        name = f'REDQ-{env}-seed{seed}'
+        command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+            f' --env-id {env}' + \
+            f' --algo REDQ' + \
+            f' --device {device}' + \
+            f' --seed {seed}' + \
+            f' --exp-prefix {name}' + \
+            ' --log_to_wandb' + \
+            '" Enter'
+
+        os.system(command=command)
+        print(command)
+        time.sleep(3)
