@@ -9,6 +9,7 @@ import torch
 from dist_rl.dist_agent import DistAgent
 from baselines.mico_agent import MICoAgent
 from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
+from baselines.redq.algos.train_redq_sac import REDQMainAgent
 from dist_rl.ablations.agents import (
     DistAblationA1RandomEncoder,
     DistAblationA2ActorOnlyEncoder,
@@ -53,6 +54,7 @@ AGENTS = {
     "DistAblationB7": DistAblationB7LaplacianKernel,
     "DistAblationB8": DistAblationB8BilinearSim,
     "DistAblationB9NoAdaptiveTau": DistAblationB9NoAdaptiveTau,
+    "REDQ": REDQMainAgent,
 }
 
 
@@ -61,7 +63,7 @@ def main():
 
     parser.add_argument("--env-id", type=str,
                         # default="ALE/Breakout-v5", help="Gym environment ID")
-                        default="HalfCheetah-v5", help="Gym environment ID")
+                        default="Walker2d-v5", help="Gym environment ID")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
@@ -70,12 +72,12 @@ def main():
                         help="If true, wandb will not save the code.")
     parser.add_argument("--exp-prefix", type=str, default="test")
     parser.add_argument("--group-name", type=str, default="")
-    parser.add_argument("--project_name", type=str, default="DistRL ")
+    parser.add_argument("--project_name", type=str, default="DistRL")
     parser.add_argument("--log_to_wandb", action="store_true", default=False,
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DBCDet") # DistAgent
+    parser.add_argument("--algo", type=str, default="REDQ") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
     parser.add_argument("--K", type=int, default=16)

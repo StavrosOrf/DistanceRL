@@ -1,7 +1,7 @@
 """
 Modified from OpenAI spinup code
 """
-from redq.user_config import DEFAULT_DATA_DIR, FORCE_DATESTAMP
+from baselines.redq.user_config import DEFAULT_DATA_DIR, FORCE_DATESTAMP
 import os.path as osp
 import time
 

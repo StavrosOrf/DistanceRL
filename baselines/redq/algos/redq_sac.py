@@ -3,7 +3,7 @@ import torch
 from torch import Tensor
 import torch.nn as nn
 import torch.optim as optim
-from redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer,\
+from baselines.redq.algos.core import TanhGaussianPolicy, Mlp, soft_update_model1_with_model2, ReplayBuffer,\
     mbpo_target_entropy_dict
 
 def get_probabilistic_num_min(num_mins):

@@ -7,7 +7,7 @@ import json
 import joblib
 import numpy as np
 import os.path as osp, time, atexit, os
-from redq.utils.serialization_utils import convert_json
+from baselines.redq.utils.serialization_utils import convert_json
 
 color2num = dict(
     gray=30,
