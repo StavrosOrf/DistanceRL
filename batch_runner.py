@@ -68,8 +68,8 @@ def batch_runner():
     print(f"Environments to run: {ENV_TO_RUN}")
 
     # seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
-    # seed_grid = [42, 32, 22, 12, 2]
-    seed_grid = [82, 72, 62, 52, 92]
+    seed_grid = [42, 32, 22, 12, 2]
+    # seed_grid = [82, 72, 62, 52, 92]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):

@@ -10,6 +10,7 @@ SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
 ABLATION_ALGOS = [
     "DistAblationA1", "DistAblationA2", "DistAblationA3", "DistAblationA4", "DistAblationA5",
     "DistAblationB1", "DistAblationB2", "DistAblationB3", "DistAblationB4", "DistAblationB5",
+    "DistAblationB6", "DistAblationB7", "DistAblationB8", "DistAblationB9NoAdaptiveTau",
 ]
 
 os.environ['WANDB_HTTP_TIMEOUT'] = '300'
@@ -44,7 +45,8 @@ def data_fetcher():
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    for project_name in ["DistRL_Exps", "DistRL_Rep", "DistRL_Ablations"]:
+    for project_name in ["DistRL_Exps", "DistRL_Rep"]:
+    # for project_name in ["DistRL_Exps", "DistRL_Rep", "DistRL_Ablations"]:
     # for project_name in ["DistRL_Exps"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")

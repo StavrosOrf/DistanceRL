@@ -594,3 +594,12 @@ class DistAblationB4CriticArgmax(DistAgent):
         a_anchor, logp, _ = self.actor.sample(obs_n)
         Qhat = q_max  # (B,1)
         return Qhat, logp
+
+
+class DistAblationB9NoAdaptiveTau(DistAgent):
+    """B9: Disable adaptive tau; use fixed schedule only."""
+
+    def __init__(self, *args, **kwargs):
+        # Force kernel_adaptive_tau off regardless of upstream config.
+        kwargs["kernel_adaptive_tau"] = 0
+        super().__init__(*args, **kwargs)

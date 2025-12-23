@@ -22,6 +22,7 @@ from dist_rl.ablations.agents import (
     DistAblationB6PoincareSim,
     DistAblationB7LaplacianKernel,
     DistAblationB8BilinearSim,
+    DistAblationB9NoAdaptiveTau,
 )
 from classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import set_seed
@@ -51,6 +52,7 @@ AGENTS = {
     "DistAblationB6": DistAblationB6PoincareSim,
     "DistAblationB7": DistAblationB7LaplacianKernel,
     "DistAblationB8": DistAblationB8BilinearSim,
+    "DistAblationB9NoAdaptiveTau": DistAblationB9NoAdaptiveTau,
 }
 
 

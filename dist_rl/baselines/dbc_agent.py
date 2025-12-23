@@ -183,7 +183,7 @@ class _DBCBase:
                  target_entropy_scale: float = 1.0,
                  z_dim: int = 50,
                  reward_scale: float = 0.1,
-                 use_mico: bool = False,
+                 use_mico: bool = True, # False
                  warmup_steps: int = 10_000,
                  normalize_obs: int = 1,
                  exp_prefix: str = "exp",
@@ -307,7 +307,7 @@ class _DBCBase:
             q_t = torch.min(q1_t, q2_t) - alpha_detached * next_logp
             backup = (rew * self.reward_scale) + (1.0 - done) * self.gamma * q_t
 
-        # encoder is NOT updated by SAC (matches original)
+        # Match original DBC: encoder is frozen for SAC updates
         with torch.no_grad():
             actor_z, critic_z = self.encoder(obs)
         q1, q2 = self.critic(critic_z, act)
@@ -316,8 +316,10 @@ class _DBCBase:
         with torch.no_grad():
             actor_z_pi, critic_z_pi = self.encoder(obs)
         a_pi, logp_pi, _ = self.actor.sample(actor_z_pi)
-        q1_pi, q2_pi = self.critic(critic_z_pi, a_pi)
-        q_pi = torch.min(q1_pi, q2_pi)
+        # Use frozen critic outputs to avoid critic gradients in the actor loss
+        with torch.no_grad():
+            q1_pi, q2_pi = self.critic(critic_z_pi, a_pi)
+            q_pi = torch.min(q1_pi, q2_pi)
         policy_loss = (alpha_detached * logp_pi - q_pi).mean()
 
         entropy_diffs = (-logp_pi - self.target_entropy)
@@ -347,12 +349,11 @@ class _DBCBase:
         pred_sample, _, _ = self._dynamics_sample(actor_z, act)
         dynamics_loss = F.mse_loss(pred_sample, next_actor_z_t)
 
+        combined_loss = reward_loss + dynamics_loss
         self.reward_opt.zero_grad(set_to_none=True)
-        reward_loss.backward()
-        self.reward_opt.step()
-
         self.dynamics_opt.zero_grad(set_to_none=True)
-        dynamics_loss.backward()
+        combined_loss.backward()
+        self.reward_opt.step()
         self.dynamics_opt.step()
 
         return reward_loss.detach(), dynamics_loss.detach()
@@ -502,7 +503,7 @@ class _DBCBase:
                 avg = self.evaluate()
                 print(f"[Eval] step={self.steps} avg_return={avg:.2f}")
                 if wandb.run is not None:
-                    wandb.log({"eval/return": avg}, step=self.steps)
+                    wandb.log({"eval/avg_reward": avg}, step=self.steps)
 
 
 class DBCAgent(_DBCBase):
