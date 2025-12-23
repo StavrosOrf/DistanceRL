@@ -7,6 +7,8 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
+from discreteDistRL.dist_agent import DiscreteDistAgent, AgentConfig as DiscreteAgentConfig
+from discreteDistRL.wrappers import make_atari_env
 from baselines.mico_agent import MICoAgent
 from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
 from baselines.redq.algos.train_redq_sac import REDQMainAgent
@@ -38,6 +40,7 @@ continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 AGENTS = {
     "DistAgent": DistAgent,
+    "DiscreteDistAgent": DiscreteDistAgent,
     "MICo": MICoAgent,
     "DBC": DBCAgent,
     "DBCDet": DBCDeterministicAgent,
@@ -62,8 +65,9 @@ def main():
     parser = argparse.ArgumentParser()
 
     parser.add_argument("--env-id", type=str,
+                        default="ALE/Pong-v5", help="Gym environment ID")
                         # default="ALE/Breakout-v5", help="Gym environment ID")
-                        default="Walker2d-v5", help="Gym environment ID")
+                        # default="Walker2d-v5", help="Gym environment ID")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
@@ -77,7 +81,7 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="REDQ") # DistAgent
+    parser.add_argument("--algo", type=str, default="DistAgent") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
     parser.add_argument("--K", type=int, default=16)
@@ -157,6 +161,22 @@ def main():
     print("="*65)
     print(
         f"Training with {args.algo} on {args.env_id} with seed {args.seed} on {args.device}")
+
+    is_ale = args.env_id.startswith("ALE/")
+
+    if args.algo == "DiscreteDistAgent" or is_ale:
+        env = make_atari_env(args.env_id, args.seed, sticky=True, clip_rewards=True)
+        eval_env = make_atari_env(args.env_id, args.seed + 1, sticky=True, clip_rewards=False)
+
+        disc_cfg = DiscreteAgentConfig(
+            env_id=args.env_id,
+            seed=args.seed,
+            device=torch.device(args.device),
+            save_dir=str(model_save_path),
+        )
+        agent = DiscreteDistAgent(env, eval_env, disc_cfg)
+        agent.train()
+        return
 
 
     if args.algo in AGENTS and args.env_id in continuous_envs:

@@ -11,7 +11,7 @@ rm -rf "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null
 import os
 import time
 
-device = "cuda:1"  # "cpu" or "cuda"
+device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 batch_size = 256
 total_steps = 1_000_000
@@ -98,18 +98,34 @@ PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 
 
 # --- REDQ launcher with defaults and wandb logging ---
-for env in ['Walker2d-v5','Humanoid-v5','Ant-v5']:  # MUJOCO_ENVS:
-    for seed in [0]:
-        name = f'REDQ-{env}-seed{seed}'
+# for env in ['Walker2d-v5','Humanoid-v5','Ant-v5']:  # MUJOCO_ENVS:
+#     for seed in [0]:
+#         name = f'REDQ-{env}-seed{seed}'
+#         command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+#             f' --env-id {env}' + \
+#             f' --algo REDQ' + \
+#             f' --device {device}' + \
+#             f' --seed {seed}' + \
+#             f' --exp-prefix {name}' + \
+#             ' --log_to_wandb' + \
+#             '" Enter'
+
+#         os.system(command=command)
+#         print(command)
+#         time.sleep(3)
+        
+# -- DiscreteDistAgent launcher with defaults and wandb logging ---
+for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
+    for seed in [100]:
+        name = f'DiscreteDistAgent-{env.strip("ALE/")}-seed{seed}'
         command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
             f' --env-id {env}' + \
-            f' --algo REDQ' + \
+            f' --algo DiscreteDistAgent' + \
             f' --device {device}' + \
             f' --seed {seed}' + \
             f' --exp-prefix {name}' + \
             ' --log_to_wandb' + \
             '" Enter'
-
         os.system(command=command)
         print(command)
         time.sleep(3)

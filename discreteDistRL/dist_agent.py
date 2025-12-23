@@ -29,9 +29,9 @@ class AgentConfig:
     env_id: str
     seed: int
     device: torch.device
-    total_steps: int = 1_000_000
+    total_steps: int = 10_000_000
     eval_episodes: int = 10
-    eval_freq: int = 50_000
+    eval_freq: int = 100_000
     buffer_size: int = 1_000_000
     batch_size: int = 256
     gamma: float = 0.99
@@ -44,13 +44,16 @@ class AgentConfig:
     rep_huber: float = 0.2
     warmup_steps: int = 50_000
     epsilon_start: float = 1.0
-    epsilon_end: float = 0.05
-    epsilon_decay: int = 250_000
+    epsilon_end: float = 0.01
+    epsilon_decay: int = 1_000_000
     policy_smoothing_eps: float = 0.2
     proposal_samples: int = 32
     kernel_softmax_temp: float = 1.0
     kernel_eps: float = 0.05
     kernel_adaptive_tau: bool = True
+    learn_alpha: bool = False
+    init_alpha: float = 0.01
+    max_grad_norm: float = 10.0
     save_dir: str = "checkpoints"
 
 
@@ -105,8 +108,14 @@ class DiscreteDistAgent:
         )
         self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=config.lr)
         self.optim_rep = torch.optim.Adam(self.rep_trunk.parameters(), lr=config.lr)
-        self.log_alpha = torch.nn.Parameter(torch.zeros(1, device=self.device))
-        self.alpha_opt = torch.optim.Adam([self.log_alpha], lr=config.lr)
+        init_alpha = torch.tensor(config.init_alpha, device=self.device).clamp(min=1e-6)
+        self.log_alpha = torch.nn.Parameter(init_alpha.log())
+        self.log_alpha.requires_grad = config.learn_alpha
+        self.alpha_opt = (
+            torch.optim.Adam([self.log_alpha], lr=config.lr) if config.learn_alpha else None
+        )
+        self.learn_alpha = config.learn_alpha
+        self.fixed_alpha = float(init_alpha.item())
 
         self.target_entropy = config.target_entropy_scale * math.log(self.action_dim)
 
@@ -118,7 +127,7 @@ class DiscreteDistAgent:
         )
 
         self.beta_ema = BetaEMA(decay=0.995)
-        self.max_grad_norm = 10.0
+        self.max_grad_norm = config.max_grad_norm
         self.steps = 0
         self.best_eval = -float("inf")
 
@@ -154,10 +163,14 @@ class DiscreteDistAgent:
         print(
             f"[Init] Policy smoothing epsilon: {self.policy_smoothing_eps}, Proposal samples: {self.proposal_samples}"
         )
+        alpha_mode = "learned" if self.learn_alpha else f"fixed={self.fixed_alpha:.4f}"
+        print(f"[Init] Alpha mode: {alpha_mode}, Target entropy: {self.target_entropy:.2f}")
 
     @property
     def alpha(self) -> float:
-        return float(self.log_alpha.exp().item())
+        if self.learn_alpha:
+            return float(self.log_alpha.exp().item())
+        return self.fixed_alpha
 
     def _obs_to_tensor(self, obs: np.ndarray) -> torch.Tensor:
         obs_t = torch.as_tensor(obs, dtype=torch.float32, device=self.device)
@@ -326,7 +339,8 @@ class DiscreteDistAgent:
         _, logits = self.actor(features)
         probs, log_probs = self._smoothed_action_distribution(logits)
         qhat = self._qhat_in_state_norm(features, probs)
-        actor_loss = (probs * (self.alpha * log_probs - qhat)).sum(dim=-1).mean()
+        alpha_val = self.alpha
+        actor_loss = (probs * (alpha_val * log_probs - qhat)).sum(dim=-1).mean()
 
         self.optim_actor.zero_grad()
         actor_loss.backward()
@@ -334,11 +348,15 @@ class DiscreteDistAgent:
         self.optim_actor.step()
 
         entropy = -(probs * log_probs).sum(dim=-1)
-        alpha_loss = -(self.log_alpha * (entropy.detach() - self.target_entropy)).mean()
-
-        self.alpha_opt.zero_grad()
-        alpha_loss.backward()
-        self.alpha_opt.step()
+        if self.learn_alpha:
+            alpha_loss = -(self.log_alpha * (entropy.detach() - self.target_entropy)).mean()
+            if self.alpha_opt is None:
+                raise RuntimeError("Alpha optimizer is not initialized despite learn_alpha=True")
+            self.alpha_opt.zero_grad()
+            alpha_loss.backward()
+            self.alpha_opt.step()
+        else:
+            alpha_loss = torch.tensor(0.0, device=self.device)
 
         if wandb.run is not None:
             wandb.log(
