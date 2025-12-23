@@ -7,8 +7,8 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
-from dist_rl.baselines.mico_agent import MICoAgent
-from dist_rl.baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
+from baselines.mico_agent import MICoAgent
+from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
 from dist_rl.ablations.agents import (
     DistAblationA1RandomEncoder,
     DistAblationA2ActorOnlyEncoder,
@@ -24,7 +24,7 @@ from dist_rl.ablations.agents import (
     DistAblationB8BilinearSim,
     DistAblationB9NoAdaptiveTau,
 )
-from classic_rl.sb3_train import train_sb3_agent
+from baselines.classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import set_seed
 
 SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]

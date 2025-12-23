@@ -12,7 +12,7 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from wandb.integration.sb3 import WandbCallback
 
 
-def _load_hparams(algo: str, env_id: str, base_dir: str = "./classic_rl/hyperparams"):
+def _load_hparams(algo: str, env_id: str, base_dir: str = "./baselines/classic_rl/hyperparams"):
     """
     Load per-env config from YAML. Prefer '<algo>_filled.yaml', fallback to '<algo>.yaml'.
     """

@@ -12,8 +12,8 @@ from dist_rl.ablations.agents import (
 	DistAblationB7LaplacianKernel,
 	DistAblationB8BilinearSim,)
 
-from dist_rl.baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
-from dist_rl.baselines.mico_agent import MICoAgent
+from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
+from baselines.mico_agent import MICoAgent
 from dist_rl.dist_agent import DistAgent
 
 __all__ = [
