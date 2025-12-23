@@ -15,6 +15,9 @@ ABLATION_ALGOS = [
 
 os.environ['WANDB_HTTP_TIMEOUT'] = '300'
 
+# API timeout used for all W&B calls (seconds)
+API_TIMEOUT_SECS = 120
+
 MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                    'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5']  # number of envs: 9
 
@@ -33,8 +36,32 @@ steps_per_env = {
 ENV_TO_RUN = [env for env in MUJOCO_ENVS if steps_per_env[env] >= 1_000_000]
 
 
+def _fetch_history_with_retry(run, keys, pandas=True, max_attempts=3, delay_secs=10):
+    """Fetch run history with a few retries to ride out transient 5xx/timeouts."""
+    attempts = 0
+    while attempts < max_attempts:
+        try:
+            return run.history(keys=keys, pandas=pandas)
+        except wandb.errors.CommError as err:
+            attempts += 1
+            print(f"    History fetch attempt {attempts} failed for {run.name}: {err}")
+            if attempts >= max_attempts:
+                break
+            # brief pause before retrying
+            import time
+            time.sleep(delay_secs)
+        except Exception as err:
+            attempts += 1
+            print(f"    History fetch attempt {attempts} failed for {run.name}: {err}")
+            if attempts >= max_attempts:
+                break
+            import time
+            time.sleep(delay_secs)
+    return None
+
+
 def data_fetcher():
-    api = wandb.Api()
+    api = wandb.Api(timeout=API_TIMEOUT_SECS)
 
     # Replace 'your_project_name' and 'your_entity_name' with your actual project and entity
     project_name = "DistRL_Exps"  # DistRL_Rep
@@ -100,7 +127,10 @@ def data_fetcher():
 
             run_results = pd.concat([run_results, data], ignore_index=True)
 
-            history = run.history()
+            history = _fetch_history_with_retry(run, keys=['_runtime'])
+            if history is None:
+                print(f"Run {run.id} skipped due to history fetch failures")
+                continue
             if '_runtime' not in history:
                 print(f"Run {run.id} has no _runtime key")
                 continue
@@ -220,9 +250,9 @@ def extract_eval_rewards_Faster(run, algo, env, seed) -> pd.DataFrame:
 
     try:
         # Fetch entire history at once - much faster than scan_history
-        history = run.history(keys=[metric_name, step_name], pandas=True)
+        history = _fetch_history_with_retry(run, keys=[metric_name, step_name], pandas=True)
 
-        if history.empty:
+        if history is None or history.empty:
             print(f"    Warning: No history data found for {run.name}")
             return None
 
