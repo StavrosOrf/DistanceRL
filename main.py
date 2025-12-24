@@ -7,7 +7,7 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
-from discreteDistRL.dist_agent import DiscreteDistAgent, AgentConfig as DiscreteAgentConfig
+from discreteDistRL.dist_agent import DiscreteDistAgent
 from discreteDistRL.wrappers import make_atari_env
 from baselines.mico_agent import MICoAgent
 from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
@@ -84,17 +84,18 @@ def main():
     parser.add_argument("--algo", type=str, default="DistAgent") # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
-    parser.add_argument("--K", type=int, default=16)
+    parser.add_argument("--K", type=int, default=64)
     parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument('--warmup-steps', type=int, default=5000,
                         help='Number of warmup steps for learning rate scheduling.')
-    parser.add_argument("--batch-size", type=int, default=5)
+    parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--buffer-size", type=int, default=1_000_000)
     parser.add_argument("--expl-sigma", type=float, default=0.3)
     parser.add_argument("--lr", type=float, default=3e-4)
-    parser.add_argument("--hidden-size", type=int, default=16)
-    parser.add_argument("--eval-episodes", type=int, default=2)
-    parser.add_argument("--eval-freq", type=int, default=5000)
+    parser.add_argument("--hidden-size", type=int, default=256)
+    parser.add_argument("--feature-dim", type=int, default=256)
+    parser.add_argument("--eval-episodes", type=int, default=10)
+    parser.add_argument("--eval-freq", type=int, default=2500)
     parser.add_argument('--alpha', type=float, default=None,
                         help='If None, autotune alpha.')
     parser.add_argument('--gamma', type=float, default=0.99)
@@ -115,7 +116,7 @@ def main():
                         help='Number of optimization rounds per environment step.')
     parser.add_argument('--target-entropy-scale', type=float, default=0.9,
                         help='Multiplier applied to -action_dim when computing the entropy target.')
-    parser.add_argument('--kernel-adaptive-tau', type=int, default=1,
+    parser.add_argument('--kernel-adaptive-tau', type=int, default=0,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
     parser.add_argument('--logdir', type=str, default='./logs')
 
@@ -164,17 +165,13 @@ def main():
 
     is_ale = args.env_id.startswith("ALE/")
 
+    # Route discrete DistRL through generic agent construction so **args.__dict__ works
     if args.algo == "DiscreteDistAgent" or is_ale:
-        env = make_atari_env(args.env_id, args.seed, sticky=True, clip_rewards=True)
-        eval_env = make_atari_env(args.env_id, args.seed + 1, sticky=True, clip_rewards=False)
-
-        disc_cfg = DiscreteAgentConfig(
-            env_id=args.env_id,
-            seed=args.seed,
-            device=torch.device(args.device),
-            save_dir=str(model_save_path),
-        )
-        agent = DiscreteDistAgent(env, eval_env, disc_cfg)
+        agent_cls = DiscreteDistAgent
+        args.save_dir = str(model_save_path)
+        args.feature_dim = args.feature_dim
+        args.hidden_size = args.hidden_size
+        agent = agent_cls(**args.__dict__)
         agent.train()
         return
 
@@ -189,3 +186,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    print("Training run complete.")

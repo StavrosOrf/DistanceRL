@@ -123,7 +123,7 @@ for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
             f' --algo DiscreteDistAgent' + \
             f' --device {device}' + \
             f' --seed {seed}' + \
-            f' --exp-prefix {name}' + \
+            f' --exp-prefix t1{name}' + \
             ' --log_to_wandb' + \
             '" Enter'
         os.system(command=command)

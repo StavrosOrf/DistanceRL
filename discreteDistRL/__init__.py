@@ -4,18 +4,18 @@ from .dist_agent import DiscreteDistAgent
 from .wrappers import make_atari_env
 from .models import (
     AtariEncoder,
-    DistanceTrunkDiscrete,
-    CategoricalActor,
-    TwinQDiscrete,
+    DistanceTrunkDiscreteNet,
+    CategoricalActorNet,
+    TwinQDiscreteNet,
 )
 from .buffers import AtariReplayBuffer
 
 __all__ = [
     "AtariEncoder",
-    "CategoricalActor",
-    "DistanceTrunkDiscrete",
+    "CategoricalActorNet",
+    "DistanceTrunkDiscreteNet",
     "DiscreteDistAgent",
-    "TwinQDiscrete",
+    "TwinQDiscreteNet",
     "AtariReplayBuffer",
     "make_atari_env",
 ]

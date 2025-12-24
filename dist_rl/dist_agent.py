@@ -491,6 +491,16 @@ class DistAgent:
             if (self.steps % self.eval_freq) == 0:
                 print(f"[Train] Evaluation at step {self.steps}")
                 self.evaluate()
+        
+        #close envs
+        self.env.close()
+        self.eval_env.close()
+        #close wandb
+        if wandb.run is not None:
+            wandb.run.finish()
+        
+        print("[Train] Training complete!")
+        return
 
     def _save(self, name: str):
         import os
