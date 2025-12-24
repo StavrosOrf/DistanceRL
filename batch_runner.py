@@ -100,8 +100,9 @@ def batch_runner():
                     cpu_cores = 1
                 else:
                     job_hours = int(hours_per_env_sb3[env]*1.5)
-                    if job_hours > 45:
-                        job_hours = 45
+                    
+                if job_hours > 45:
+                    job_hours = 45
 
                 training_steps = steps_per_env[env]
 

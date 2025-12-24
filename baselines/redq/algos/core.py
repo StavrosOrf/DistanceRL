@@ -14,6 +14,8 @@ mbpo_target_entropy_dict = {
     'Hopper-v4': -1, 'HalfCheetah-v4': -3, 'Walker2d-v4': -3, 'Ant-v4': -4, 'Humanoid-v4': -2,
     # v5 gymnasium Mujoco
     'Hopper-v5': -1, 'HalfCheetah-v5': -3, 'Walker2d-v5': -3, 'Ant-v5': -4, 'Humanoid-v5': -2,
+    'Reacher-v5': -1, 'Pendulum-v5': -1, 'InvertedPendulum-v5': -1, 'InvertedDoublePendulum-v5': -1,
+    'Swimmer-v5': -1, 
 }
 mbpo_epoches = {
     'Hopper-v2': 125, 'Walker2d-v2': 300, 'Ant-v2': 300, 'HalfCheetah-v2': 400, 'Humanoid-v2': 300,
@@ -21,6 +23,8 @@ mbpo_epoches = {
     'Hopper-v4': 125, 'Walker2d-v4': 300, 'Ant-v4': 300, 'HalfCheetah-v4': 400, 'Humanoid-v4': 300,
     # v5 gymnasium Mujoco
     'Hopper-v5': 125, 'Walker2d-v5': 300, 'Ant-v5': 300, 'HalfCheetah-v5': 400, 'Humanoid-v5': 300,
+    'Reacher-v5': 100, 'Pendulum-v5': 100, 'InvertedPendulum-v5': 100, 'InvertedDoublePendulum-v5': 100,
+    'Swimmer-v5': 100,
 }
 
 def weights_init_(m):
