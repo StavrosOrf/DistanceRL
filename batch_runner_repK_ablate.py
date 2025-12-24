@@ -110,13 +110,14 @@ conda deactivate
 
 
 def main():
-    seeds = [0]
+    seeds = [10,20,30,40]
     use_tmux = False  # set to False to use SLURM
 
     for env in TASKS:
         cfg = getattr(DistRLConfig(), env.split('-')[0].lower(), {})
-        hours = 30 if env == "Humanoid-v5" else 15
-        cpu_cores = 3 if env == "Humanoid-v5" else 1
+        hours = 20 if env == "Humanoid-v5" else 15
+        cpu_cores = 1
+        # cpu_cores = 3 if env == "Humanoid-v5" else 1
 
         # Stage 1: ablate K only (rep_gamma_shape fixed to config default)
         base_gamma = cfg.get("rep_gamma_shape", 0.5)

@@ -151,6 +151,9 @@ class DiscreteDistAgent:
         self.steps = 0
         self.best_eval = -float("inf")
 
+        # Respect lightweight wandb flag passed through main.py; default False when absent.
+        self.lightweight_wandb = bool(kwargs.get("lightweight_wandb", True))
+
         self.K = max(1, K)
         self.kernel_softmax_temp = kernel_softmax_temp
         self.kernel_eps = kernel_eps
@@ -161,7 +164,7 @@ class DiscreteDistAgent:
 
         os.makedirs(save_dir, exist_ok=True)
 
-        if wandb.run is not None:
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.run.log_code(".")
 
         print(
@@ -266,7 +269,7 @@ class DiscreteDistAgent:
         q_tilde = qk - q_bar
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)  # (B,1)
 
-        if wandb.run is not None:
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.log(
                 {
                     "kernel_instate/mean_tau": float(tau.mean().item()),
@@ -331,7 +334,7 @@ class DiscreteDistAgent:
         torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), self.max_grad_norm)
         self.optim_q.step()
 
-        if wandb.run is not None:
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.log({"train/q_loss": float(loss.item())},
                       step=self.steps)
         return float(loss.item())
@@ -363,7 +366,7 @@ class DiscreteDistAgent:
         else:
             alpha_loss = torch.tensor(0.0, device=self.device)
 
-        if wandb.run is not None:
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.log(
                 {
                     "train/actor_loss": float(actor_loss.item()),
@@ -420,7 +423,7 @@ class DiscreteDistAgent:
         torch.nn.utils.clip_grad_norm_(self.rep_trunk.parameters(), self.max_grad_norm)
         self.optim_rep.step()
 
-        if wandb.run is not None:
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.log(
                 {
                     "rep/loss": float(loss.item()),

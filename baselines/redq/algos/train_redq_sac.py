@@ -64,6 +64,7 @@ class REDQMainAgent:
                  eval_episodes: int,
                  eval_freq: int,
                  exp_prefix: str,
+                 lightweight_wandb: bool = False,
                  **_):
 
         self.env = gym.make(env_id)
@@ -84,6 +85,7 @@ class REDQMainAgent:
         self.steps = 0
         self.max_ep_len = self.env._max_episode_steps
         self.best_eval = -float('inf')
+        self.lightweight_wandb = bool(lightweight_wandb)
 
         obs_dim = self.env.observation_space.shape[0]
         act_dim = self.env.action_space.shape[0]
@@ -164,4 +166,10 @@ class REDQMainAgent:
             if (self.steps % self.eval_freq) == 0:
                 print(f"[REDQ] Eval at step {self.steps}")
                 self.evaluate()
+
+        # Cleanup at end of training
+        self.env.close()
+        self.eval_env.close()
+        if wandb.run is not None:
+            wandb.finish()
 

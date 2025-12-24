@@ -122,12 +122,14 @@ conda deactivate
 
 
 def main():
-    seeds = [0]
+    seeds = [10,20,30,40]
+    use_tmux = False  # set to False to use SLURM
+    
     algos = ABLATION_ALGOS
     use_tmux = False  # set to False to use SLURM
     for env in TASKS:
-        hours = 30 if env == "Humanoid-v5" else 15
-        cpu_cores = 3 if env == "Humanoid-v5" else 1
+        hours = 15 if env == "Humanoid-v5" else 10
+        cpu_cores = 1
         for algo in algos:
             for seed in seeds:
                 cmd = build_command(env, algo, seed)

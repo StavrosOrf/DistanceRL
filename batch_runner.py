@@ -38,8 +38,9 @@ hours_per_env_sb3 = {
 def batch_runner():
     # ---------------- General configuration ----------------
 
-    partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
-    algo = ['DistAgent']
+    partition = 'gpu-a100'  # gpu-a100 # gpu-a100-small # gpu, compute
+    # algos_to_run = ['DistAgent', 'REDQ']
+    algos_to_run = ['REDQ']
     group_name = "Results"
     project_name = "DistRL_Exps"  # DistRL_Rep
 
@@ -47,6 +48,7 @@ def batch_runner():
     device = 'cuda' if partition != 'compute' else 'cpu'
     
     memory_per_cpu = '5300' if partition != 'compute' else '3800'
+    memory_per_cpu = "8000" if partition == 'gpu-a100' else memory_per_cpu
     batch_arg = '#SBATCH --gpus-per-task=1' if partition != 'compute' else '\n'
 
     SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
@@ -82,15 +84,20 @@ def batch_runner():
             cpu_cores = 1
             
         # for algo in SB3_ALGOS:
-        for algo in ['DistAgent']:
+        for algo in algos_to_run:
             for seed in seed_grid:
 
                 if algo == 'DistAgent':
                     g = getattr(DistRLConfig(), env.split(
                         '-')[0].lower(), None)
+                else:
+                    g = None
 
                 if algo in SB3_ALGOS:
                     job_hours = hours_per_env_sb3[env]
+                elif algo == 'REDQ':
+                    job_hours = hours_per_env_sb3[env] * 3
+                    cpu_cores = 1
                 else:
                     job_hours = int(hours_per_env_sb3[env]*1.5)
                     if job_hours > 45:
@@ -114,7 +121,7 @@ def batch_runner():
                     ' --log_to_wandb' + \
                     ' --lightweight_wandb'
 
-                if algo == 'DistAgent':
+                if algo == 'DistAgent' and g is not None:
                     extra_command = f' --batch-size {g["batch_size"]}' + \
                         f' --K {g["K"]}' + \
                         f' --lr {g["lr"]}' + \
