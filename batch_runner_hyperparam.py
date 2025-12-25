@@ -9,138 +9,125 @@ srun --mpi=pmix --job-name=interactive --partition=compute --cpus-per-task=2 --q
 
 import os
 import random
+from dist_rl.config import DistRLConfig
+
+steps_per_env = {
+    'HalfCheetah-v5': 5_000_000,
+    'Ant-v5': 5_000_000,
+    'Hopper-v5': 3_000_000,
+    'Humanoid-v5': 10_000_000,
+    'InvertedDoublePendulum-v5': 500_000,
+    'InvertedPendulum-v5': 500_000,
+    'Reacher-v5': 500_000,
+    'Swimmer-v5': 1_000_000,
+    'Walker2d-v5': 5_000_000,
+}
+
+hours_per_env_sb3 = {
+    'HalfCheetah-v5': 20,
+    'Ant-v5': 20,
+    'Hopper-v5': 12,
+    'Humanoid-v5': 45,
+    'InvertedDoublePendulum-v5': 6,
+    'InvertedPendulum-v5': 6,
+    'Reacher-v5': 3,
+    'Swimmer-v5': 5,
+    'Walker2d-v5': 12,
+}
 
 def batch_runner():
     # ---------------- General configuration ----------------
 
     partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
-    algo = ['DistAgent']
-    group_name = "Ablationv2_"
-    project_name = "DistRL" # DistRL_Rep
+    algo_list = ['DistAgent']
+    group_name = "HyperparamGrid"
+    project_name = "DistRL_Hyper"  # DistRL_Rep
 
     # resource configuration
     device = 'cuda' if partition != 'compute' else 'cpu'
-    job_hours = 6 if partition == 'gpu-a100-small' else 8
-
-    cpu_cores = 1 if partition != 'compute' else 2
     memory_per_cpu = '5300' if partition != 'compute' else '3800'
+    memory_per_cpu = "8000" if partition == 'gpu-a100' else memory_per_cpu
     batch_arg = '#SBATCH --gpus-per-task=1' if partition != 'compute' else '\n'
-
-    # training defaults (kept constant across ablations)
-    v_gamma = 1.0
-    hidden_size_default = 256  # !!!
-    top_k_default = 32
-    comp_samples_default = 4096
-    noise_type_default = "OU"
-    eval_episodes_default = 10
-    policy_training_start_default = 10_000
-    val_training_start_default = 10_000
-    total_steps_default = 1_000_000
-    buffer_size_default = total_steps_default  #!!!
-    eval_freq_default = 5000
-    updates_per_step_default = 1
-    expl_sigma = 0.1
-
-    rep_gamma_shape = 0.5
-
-    alpha_cql_default = 0.0
-    kernel_temp_default = 0.5
-    kernel_cand_default = 2048
-    kernel_state_k_default = 64
-    kernel_aux_weight = 0.1
 
     SB3_ALGOS = ["ppo", "td3", "sac", "tqc"]
     MUJOCO_ENVS = ['HalfCheetah-v5', 'Ant-v5', 'Hopper-v5', 'Humanoid-v5', 'InvertedDoublePendulum-v5',
                 'InvertedPendulum-v5', 'Reacher-v5', 'Swimmer-v5', 'Walker2d-v5'] #number of envs: 9
-    BOX2D_ENVS = ['LunarLanderContinuous-v3',
-                'MountainCarContinuous-v0', 'Pendulum-v1'] #number of envs: 3
-    CLASSIC_ENVS = ['CartPole-v1', 'Acrobot-v1'] #number of envs: 2
-
-    HARD_MUJOCO_ENVS = ['Humanoid-v5', 'Ant-v5'] #number of envs: 2
     
-    F_ENVS = ['Walker2d-v5', 'Hopper-v5', 'Swimmer-v5', 'Reacher-v5', 'InvertedDoublePendulum-v5',
-              'InvertedPendulum-v5']
-
-    continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
+    F_ENVS = ['Walker2d-v5', 'HalfCheetah-v5', 'Humanoid-v5']
 
     # ---------------- Ablation grids ----------------
 
-
-    lr_grid = [1e-3]  # [1e-3]
-
     seed_grid = [42, 32]
-
-    K_grid = [32, 64, 256]
-    expl_sigma_grid = [0.2]
-    target_entropy_scale_grid = [1]
-    batch_size_grid = [256] #!
-    rep_gamma_shape_grid = [0.5, 2.0] #!
-    kernel_adaptive_tau_grid = [1] #!
-    normalize_obs_grid = [1] #!
+    center_qhat_grid = [0, 1]
+    kernel_adaptive_tau_grid = [0]
+    rep_gamma_shape_grid = [0.5, 2.0]
+    K_grid = [32, 64, 128, 256]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
     for env in F_ENVS:
-        # for algo in ['tqc']:  # SB3_ALGOS:
-        for algo in ['DistAgent']:
-            for rep_gamma_shape in rep_gamma_shape_grid:
-                for kernel_adaptive_tau in kernel_adaptive_tau_grid:
-                    for normalize_obs in normalize_obs_grid:
-                        for batch_size in batch_size_grid:
-                            for K in K_grid:            
-                                for lr in lr_grid:
-                                    for seed in seed_grid:
-                                        for target_entropy_scale in target_entropy_scale_grid:
-                                            for expl_sigma in expl_sigma_grid:
-                                                
-                                                if algo in SB3_ALGOS:
-                                                    job_hours = 5
-                                                    if env in ['Humanoid-v5']:
-                                                        job_hours = 7
-                                                    
-                                                if env in ['Humanoid-v5']:
-                                                    buffer_size_default = 800_000
-                                                    cpu_cores = 1 if partition == 'compute' else 2
-                                                
-                                                run_id = (f"{algo}_K{K}_bs{batch_size}_lr{lr}_tes{target_entropy_scale}_es{expl_sigma}")
-                                                #add the other grid variables to the run_id
-                                                run_id += (f"_rgs{rep_gamma_shape}_kat{kernel_adaptive_tau}_norm{normalize_obs}")
-                                                run_id += f"_seed{seed}"
-                                                run_name = f"{run_id}_{random.randint(0, 99999)}"
-                                                print(f"Submitting {run_name}")
+        # Default CPU allocation; adjust if heavier envs are added later
+        cpu_cores = 1 #if env not in ['Humanoid-v5'] else 3
 
-                                                python_command = 'python main.py' + \
-                                                    f' --env-id {env}' + \
-                                                    f' --algo {algo}' + \
-                                                    f' --device {device}' + \
-                                                    f' --batch-size {batch_size}' + \
-                                                    f' --K {K}' + \
-                                                    f' --lr {lr}' + \
-                                                    f' --hidden-size {hidden_size_default}' + \
-                                                    f' --total-steps {total_steps_default}' + \
-                                                    f' --buffer-size {buffer_size_default}' + \
-                                                    f' --seed {seed}' + \
-                                                    f' --exp-prefix {run_name}' + \
-                                                    f' --group-name {group_name}' + \
-                                                    f' --eval-episodes {eval_episodes_default}' + \
-                                                    f' --eval-freq {eval_freq_default}' + \
-                                                    f' --noise-type {noise_type_default}' + \
-                                                    f' --expl-sigma {expl_sigma}' + \
-                                                    f' --normalize-obs {normalize_obs}' + \
-                                                    f' --updates-per-step {updates_per_step_default}' + \
-                                                    f' --rep-gamma-shape {rep_gamma_shape}' + \
-                                                    f' --project_name {project_name}' + \
-                                                    f' --target-entropy-scale {target_entropy_scale}' + \
-                                                    f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
-                                                    ' --log_to_wandb' + \
-                                                    ' --lightweight_wandb'
+        for algo in algo_list:
+            base_cfg = getattr(DistRLConfig(), env.split('-')[0].lower(), None)
+            if base_cfg is None:
+                print(f"Skipping {env}: missing base config")
+                continue
 
-                                                print(python_command)
+            # Use longer budgets for non-SB3 algos (similar to batch_runner)
+            job_hours = 10 # int(hours_per_env_sb3.get(env, 8) * 1.5)
+            if job_hours > 45:
+                job_hours = 45
 
-                                                command = '''#!/bin/sh
-#!/bin/bash
+            training_steps = 1_000_000 #steps_per_env.get(env, base_cfg.get("total_steps", 1_000_000))
+
+            for seed in seed_grid:
+                for center_qhat in center_qhat_grid:
+                    for kernel_adaptive_tau in kernel_adaptive_tau_grid:
+                        for rep_gamma_shape in rep_gamma_shape_grid:
+                            for K in K_grid:
+                                # Use per-env best K when K is None
+                                K_val = base_cfg["K"] if K is None else K
+
+                                run_id = (
+                                    f"{algo}_{env}_K{K_val}_cq{center_qhat}_kat{kernel_adaptive_tau}"
+                                    f"_rgs{rep_gamma_shape}_seed{seed}"
+                                )
+                                run_name = f"{run_id}_{random.randint(0, 99999)}"
+                                print(f"Submitting {run_name}")
+
+                                python_command = 'python main.py' + \
+                                    f' --env-id {env}' + \
+                                    f' --algo {algo}' + \
+                                    f' --device {device}' + \
+                                    f' --batch-size {base_cfg["batch_size"]}' + \
+                                    f' --K {K_val}' + \
+                                    f' --lr {base_cfg["lr"]}' + \
+                                    f' --hidden-size {base_cfg["hidden_size"]}' + \
+                                    f' --total-steps {training_steps}' + \
+                                    f' --buffer-size {base_cfg["buffer_size"]}' + \
+                                    f' --seed {seed}' + \
+                                    f' --exp-prefix {run_name}' + \
+                                    f' --group-name {group_name}' + \
+                                    f' --eval-episodes {base_cfg["eval_episodes"]}' + \
+                                    f' --eval-freq {base_cfg["eval_freq"]}' + \
+                                    f' --expl-sigma {base_cfg["expl_sigma"]}' + \
+                                    f' --normalize-obs {base_cfg["normalize_obs"]}' + \
+                                    f' --updates-per-step {base_cfg["updates_per_step"]}' + \
+                                    f' --rep-gamma-shape {rep_gamma_shape}' + \
+                                    f' --project_name {project_name}' + \
+                                    f' --target-entropy-scale {base_cfg["target_entropy_scale"]}' + \
+                                    f' --kernel-adaptive-tau {kernel_adaptive_tau}' + \
+                                    f' --center-qhat {center_qhat}' + \
+                                    ' --log_to_wandb' + \
+                                    ' --lightweight_wandb'
+
+                                print(python_command)
+
+                                command = '''#!/bin/bash
 #SBATCH --job-name="dist_rl"
 ''' + \
                                     f'#SBATCH --partition={partition}\n' + \
@@ -181,13 +168,13 @@ previous=$(/usr/bin/nvidia-smi --query-accounted-apps='gpu_utilization,mem_utili
 conda deactivate
 '''
 
-                                                with open('run_tmp.sh', 'w') as f:
-                                                    f.write(command)
+                                with open('run_tmp.sh', 'w') as f:
+                                    f.write(command)
 
-                                                with open(f'./slurm_logs/{run_name}.sh', 'w') as f:
-                                                    f.write(command)
+                                with open(f'./slurm_logs/{run_name}.sh', 'w') as f:
+                                    f.write(command)
 
-                                                os.system('sbatch run_tmp.sh')
+                                os.system('sbatch run_tmp.sh')
 
 
 if __name__ == "__main__":

@@ -32,7 +32,7 @@ class REDQSACAgent(object):
                  lr=3e-4, gamma=0.99, polyak=0.995,
                  alpha=0.2, auto_alpha=True, target_entropy='mbpo',
                  start_steps=5000, delay_update_steps='auto',
-                 utd_ratio=20, num_Q=10, num_min=2, q_target_mode='min',
+                 utd_ratio=10, num_Q=10, num_min=2, q_target_mode='min',
                  policy_update_delay=20,
                  ):
         # set up networks

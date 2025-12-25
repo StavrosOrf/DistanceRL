@@ -129,7 +129,7 @@ for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
                     f' --warmup-steps 50000' + \
                     f' --center-qhat 0' + \
                     f' --use-one-hot-actions {use_one_hot_actions}' + \
-                    f' --exp-prefix NewEntropy_sacstyle_alpha_{name}' + \
+                    f' --exp-prefix FixedQreward_{name}' + \
                     ' --log_to_wandb' + \
                     '" Enter'
                 os.system(command=command)

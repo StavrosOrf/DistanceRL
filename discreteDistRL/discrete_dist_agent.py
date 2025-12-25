@@ -465,6 +465,7 @@ class DiscreteDistAgent:
         obs = self._maybe_normalize_obs(obs, update_stats=False)
         next_obs = self._maybe_normalize_obs(next_obs, update_stats=False)
         actions = batch["actions"].to(self.device)
+        rewards = batch["rewards"].to(self.device)
         dones = batch["dones"].to(self.device)
         if self.verbose:
             print("\n\n[Representation Loss]")
@@ -487,6 +488,9 @@ class DiscreteDistAgent:
                 print("z shape:", z.shape)
                 print("z_next shape:", z_next.shape)
                 print("q_targ shape:", q_targ.shape)
+            
+        q_targ = rewards.unsqueeze(-1) + \
+            (1.0 - dones.unsqueeze(-1)) * self.gamma * q_targ
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z,

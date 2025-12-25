@@ -27,6 +27,7 @@ class DistAgent:
                  tau: float,
                  lr: float,
                  K: int,
+                 lightweight_wandb: bool,
                  expl_sigma: float,
                  target_entropy_scale: float,
                  updates_per_step: int,
@@ -129,8 +130,9 @@ class DistAgent:
         self.warmup_steps = warmup_steps
         self.best_eval = -float('inf')
         self._printed_warmup_notice = False
-
-        if wandb.run is not None:
+        self.lightweight_wandb = lightweight_wandb
+        
+        if wandb.run is not None and not self.lightweight_wandb:
             wandb.run.log_code(".")
 
         print("[Init] DistanceAgent setup complete")
