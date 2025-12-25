@@ -89,10 +89,10 @@ class DistanceTrunkDiscreteNet(nn.Module):
         action_dim: int,
         feature_dim: int = 512,
         hidden_dim: int = 512,
-        embed_dim: int = 128,
         use_one_hot_actions: bool = False,
     ) -> None:
         super().__init__()
+        embed_dim = hidden_dim // 4
         self.encoder = AtariEncoder(obs_channels, feature_dim)
         self.action_dim = action_dim
         self.use_one_hot_actions = use_one_hot_actions
@@ -109,7 +109,7 @@ class DistanceTrunkDiscreteNet(nn.Module):
         return self._forward_latent(state_latent, actions)
 
     def _forward_latent(self, state_latent: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        print(f'actions shape: {actions.shape}')
+        print(f'\nactions shape: {actions.shape}')
 
         # Floating inputs are treated as probabilities / one-hot encodings regardless of use_one_hot_actions flag.
         if torch.is_floating_point(actions):

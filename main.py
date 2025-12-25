@@ -115,7 +115,7 @@ def main():
     # Actor Training args
     parser.add_argument('--updates-per-step', type=int, default=1,
                         help='Number of optimization rounds per environment step.')
-    parser.add_argument('--target-entropy-scale', type=float, default=0.9,
+    parser.add_argument('--target-entropy-scale', type=float, default=0.98,
                         help='Multiplier applied to -action_dim when computing the entropy target.')
     parser.add_argument('--kernel-adaptive-tau', type=int, default=0,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
@@ -129,7 +129,7 @@ def main():
                         help='If >0 and proposal-mode=topk, limit proposals to top-k actions by policy logit.')
     parser.add_argument('--proposal-eps', type=float, default=0.0,
                         help='Epsilon for eps_mix proposal; mixes uniform with policy probs.')
-    parser.add_argument('--use-one-hot-actions', type=int, default=0,
+    parser.add_argument('--use-one-hot-actions', type=int, default=1,
                         help='If 1, rep trunk uses one-hot action inputs instead of embeddings.')
 
     args = parser.parse_args()
