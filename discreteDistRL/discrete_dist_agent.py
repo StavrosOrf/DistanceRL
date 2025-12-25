@@ -63,6 +63,7 @@ class DiscreteDistAgent:
         save_dir: str = "checkpoints",
         hidden_size: int = 512,
         feature_dim: int = 512,
+        verbose: bool = False,
         **kwargs
     ) -> None:
 
@@ -102,6 +103,7 @@ class DiscreteDistAgent:
         self.save_dir = save_dir
         self.hidden_size = hidden_size
         self.feature_dim = feature_dim
+        self.verbose = verbose
 
         set_seed(seed)
         self.env.reset(seed=seed)
@@ -132,10 +134,12 @@ class DiscreteDistAgent:
         self.rep_trunk = DistanceTrunkDiscreteNet(
             self.frames, self.action_dim, feature_dim, hidden_dim,
             use_one_hot_actions=use_one_hot_actions,
+            verbose=verbose,
         ).to(self.device)
         self.rep_trunk_target = DistanceTrunkDiscreteNet(
             self.frames, self.action_dim, feature_dim, hidden_dim,
             use_one_hot_actions=use_one_hot_actions,
+            verbose=verbose,
         ).to(self.device)
         self.rep_trunk_target.load_state_dict(self.rep_trunk.state_dict())
 
@@ -286,39 +290,47 @@ class DiscreteDistAgent:
                 self.all_actions.unsqueeze(0).expand(B, -1),
                 num_classes=self.action_dim,
             ).float()
-            print("actions_full shape:", actions_full.shape)
-            print(f'actions_full: {actions_full[0,:]}')
+            if self.verbose:
+                print("actions_full shape:", actions_full.shape)
+                print(f'actions_full: {actions_full[0,:]}')
             z_k = self.rep_trunk_target(obs_n, actions_full)
             z_k = F.normalize(z_k, p=2, dim=-1)
-            print("z_k shape:", z_k.shape)
+            if self.verbose:
+                print("z_k shape:", z_k.shape)
             q1_k, q2_k = self.q_target(obs_n)
             q_min_k = torch.min(q1_k, q2_k)
             qk = q_min_k.unsqueeze(-1)  # (B,A,1)
-            print("qk shape:", qk.shape)
+            if self.verbose:
+                print("qk shape:", qk.shape)
 
         # Current policy distribution (grad path)
         _, logits_anchor = self.actor(obs_n)
-        print("----------------\n\nlogits_anchor shape:", logits_anchor.shape)
+        if self.verbose:
+            print("----------------\n\nlogits_anchor shape:", logits_anchor.shape)
         log_probs = torch.log_softmax(logits_anchor, dim=-1)
         probs = log_probs.exp()
-        print("probs:", probs[0, :])
+        if self.verbose:
+            print("probs:", probs[0, :])
 
         # Pass softmax probabilities directly into the rep trunk to build probability-conditioned anchors.
         z_anchor = self.rep_trunk(obs_n, probs)
-        print("----------------\n\nz_anchor shape:", z_anchor.shape)
+        if self.verbose:
+            print("----------------\n\nz_anchor shape:", z_anchor.shape)
 
         z_anchor = F.normalize(z_anchor, p=2, dim=-1)
 
         S = torch.einsum("bh,bkh->bk", z_anchor, z_k).clamp(-1.0, 1.0)
-        print("S shape:", S.shape)
+        if self.verbose:
+            print("S shape:", S.shape)
 
         tau = self._kernel_tau_instate(S, base_temp=softmax_temp)
         W = torch.softmax(S / tau, dim=-1)
         if eps > 0.0:
             W = (1.0 - eps) * W + eps / self.action_dim
 
-        print("W shape:", W.shape)
-        print("\n\n\n----------------")
+        if self.verbose:
+            print("W shape:", W.shape)
+            print("\n\n\n----------------")
         if self.center_qhat:
             q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
                                                keepdim=True).detach()  # (B,1,1)
@@ -407,7 +419,7 @@ class DiscreteDistAgent:
 
     def _update_actor_and_alpha(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         obs = batch["obs"].to(self.device)
-        print("\n\n[Actor Update]")
+        # print("\n\n[Actor Update]")
         Qhat, logp = self._qhat_in_state_norm(
             obs,
             K=self.K,
@@ -415,9 +427,8 @@ class DiscreteDistAgent:
             eps=self.kernel_eps,
         )
 
-        # actor_loss = (self.log_alpha.exp() * logp.mean() - Qhat.mean())
-        actor_loss = (self.log_alpha.exp() * (logp + self.target_entropy).mean()
-                      - Qhat.mean())
+        actor_loss = (self.log_alpha.exp() * logp.mean()
+                      - Qhat).mean()
 
         self.optim_actor.zero_grad()
         actor_loss.backward()
@@ -425,7 +436,7 @@ class DiscreteDistAgent:
             self.actor.parameters(), self.max_grad_norm)
         self.optim_actor.step()
 
-        alpha_loss = -(self.log_alpha.exp() * (-logp.detach() -
+        alpha_loss = (self.log_alpha.exp() * (-logp.detach() -
                                          self.target_entropy)).mean()
 
         self.alpha_opt.zero_grad()
@@ -455,7 +466,8 @@ class DiscreteDistAgent:
         next_obs = self._maybe_normalize_obs(next_obs, update_stats=False)
         actions = batch["actions"].to(self.device)
         dones = batch["dones"].to(self.device)
-        print("\n\n[Representation Loss]")
+        if self.verbose:
+            print("\n\n[Representation Loss]")
         z = self.rep_trunk(obs, actions)
 
         with torch.no_grad():
@@ -466,14 +478,15 @@ class DiscreteDistAgent:
             z_next = self.rep_trunk_target(next_obs, action_next)
             q1_next, q2_next = self.q_target(next_obs)
             q_min_next = torch.min(q1_next, q2_next)
-            print("\naction_next shape:", action_next[0, :])
-            print("q_min_next shape:", q_min_next[0, :])
+            if self.verbose:
+                print("\naction_next shape:", action_next[0, :])
+                print("q_min_next shape:", q_min_next[0, :])
             q_targ = q_min_next.gather(1, action_next)
-            print("q_targ:", q_targ[0, :])
-
-            print("z shape:", z.shape)
-            print("z_next shape:", z_next.shape)
-            print("q_targ shape:", q_targ.shape)
+            if self.verbose:
+                print("q_targ:", q_targ[0, :])
+                print("z shape:", z.shape)
+                print("z_next shape:", z_next.shape)
+                print("q_targ shape:", q_targ.shape)
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z,
@@ -544,6 +557,15 @@ class DiscreteDistAgent:
             obs = next_obs
             episode_reward += float(reward)
             episode_length += 1
+            
+            # Update step
+            if self.steps > self.warmup_steps:
+                for _ in range(self.updates_per_step):
+                    batch = self.replay.sample(self.batch_size)
+                    self._update_critics(batch)
+                    self._update_actor_and_alpha(batch)
+                    self._representation_loss(batch)
+                    self._update_targets()
 
             if done:
                 episode_count += 1
@@ -561,13 +583,8 @@ class DiscreteDistAgent:
                 obs, _ = self.env.reset()
                 episode_reward = 0.0
                 episode_length = 0
+            
 
-                for _ in range(self.updates_per_step):
-                    batch = self.replay.sample(self.batch_size)
-                    self._update_critics(batch)
-                    self._update_actor_and_alpha(batch)
-                    self._representation_loss(batch)
-                    self._update_targets()
                 # exit(0)
             if self.steps % self.eval_freq == 0 and self.steps >= self.warmup_steps:
                 eval_return = self.evaluate()

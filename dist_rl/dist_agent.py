@@ -251,7 +251,7 @@ class DistAgent:
 
         return actor_loss, alpha_loss
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         # Use rep trunk and TARGET rep trunk (stop-grad on next)
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
@@ -273,6 +273,8 @@ class DistAgent:
 
             q1t, q2t = self.q_targ(obs_n, act)
             q_targ = torch.min(q1t, q2t).squeeze(-1)  # (B,)
+            
+        q_targ = rew + self.gamma * (1.0 - done) * q_targ
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z, z_next, done, q_targ,
@@ -442,7 +444,7 @@ class DistAgent:
                 
                 # ---- Rep update ----
                 rep_loss, rep_info = self._rep_loss(
-                    obs, act_env, next_obs, done_b)
+                    obs, act_env, next_obs, done_b, rew)
                 self.optim_rep.zero_grad()
                 rep_loss.backward()
                 torch.nn.utils.clip_grad_norm_(
