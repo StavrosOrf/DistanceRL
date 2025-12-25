@@ -7,6 +7,9 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
+# Reuse RunningMeanStd from continuous utils to keep behavior aligned.
+from dist_rl.utils import RunningMeanStd
+
 
 def set_seed(seed: int) -> None:
     import random
@@ -44,4 +47,4 @@ def cosine_decay(step: int, total: int, max_val: float, min_val: float) -> float
     return min_val + 0.5 * (max_val - min_val) * (1.0 + math.cos(cos_inner))
 
 
-__all__ = ["LinearSchedule", "cosine_decay", "polyak_update", "set_seed"]
+__all__ = ["LinearSchedule", "cosine_decay", "polyak_update", "set_seed", "RunningMeanStd"]

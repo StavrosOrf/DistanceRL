@@ -11,6 +11,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import wandb
+from torch.distributions import Categorical
 
 from dist_rl.representations import BetaEMA, recursive_nstep_cosine_loss_ema
 
@@ -20,7 +21,7 @@ from .models import (
     TwinQDiscreteNet,
     DistanceTrunkDiscreteNet,
 )
-from .utils import polyak_update, set_seed
+from .utils import polyak_update, set_seed, RunningMeanStd
 from .wrappers import make_atari_env
 
 
@@ -46,14 +47,20 @@ class DiscreteDistAgent:
         rep_lam: float = 0.5,
         rep_huber: float = 0.2,
         warmup_steps: int = 50_000,
+        normalize_obs: bool = True,
         K: int = 32,
         kernel_softmax_temp: float = 1.0,
         kernel_eps: float = 0.05,
         kernel_adaptive_tau: bool = True,
+        center_qhat: bool = True,
+        proposal_mode: str = "multinomial",
+        proposal_topk: int = 0,
+        proposal_eps: float = 0.0,
+        use_one_hot_actions: bool = False,
         learn_alpha: bool = True,
-        init_alpha: float = 0.01,
+        init_alpha: float = 1.0,
         entropy_coef: float = 0.01,
-        max_grad_norm: float = 10.0,
+        max_grad_norm: float = 5.0,
         save_dir: str = "checkpoints",
         hidden_size: int = 512,
         feature_dim: int = 512,
@@ -61,8 +68,9 @@ class DiscreteDistAgent:
     ) -> None:
 
         env = make_atari_env(env_id, seed, sticky=True, clip_rewards=True)
-        eval_env = make_atari_env(env_id, seed + 1, sticky=True, clip_rewards=False)
-        
+        eval_env = make_atari_env(
+            env_id, seed + 1, sticky=True, clip_rewards=False)
+
         self.env = env
         self.eval_env = eval_env
         self.device = device
@@ -84,10 +92,16 @@ class DiscreteDistAgent:
             rep_lam=rep_lam,
             rep_huber=rep_huber,
             warmup_steps=warmup_steps,
+            normalize_obs=normalize_obs,
             K=K,
             kernel_softmax_temp=kernel_softmax_temp,
             kernel_eps=kernel_eps,
             kernel_adaptive_tau=kernel_adaptive_tau,
+            center_qhat=center_qhat,
+            proposal_mode=proposal_mode,
+            proposal_topk=proposal_topk,
+            proposal_eps=proposal_eps,
+            use_one_hot_actions=use_one_hot_actions,
             learn_alpha=learn_alpha,
             init_alpha=init_alpha,
             entropy_coef=entropy_coef,
@@ -109,35 +123,47 @@ class DiscreteDistAgent:
         assert isinstance(self.env.action_space, gym.spaces.Discrete)
         self.action_dim = self.env.action_space.n
 
+        # Toggle observation normalization to mirror continuous agent behavior.
+        self.normalize_obs = bool(normalize_obs)
+
         # === Networks ===
         hidden_dim = hidden_size
-        self.actor = CategoricalActorNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
-        self.actor_target = CategoricalActorNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
-        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.actor = CategoricalActorNet(
+            self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
 
-        self.q_net = TwinQDiscreteNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
-        self.q_target = TwinQDiscreteNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
+        self.q_net = TwinQDiscreteNet(
+            self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
+        self.q_target = TwinQDiscreteNet(
+            self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
         self.q_target.load_state_dict(self.q_net.state_dict())
 
-        self.rep_trunk = DistanceTrunkDiscreteNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
-        self.rep_trunk_target = DistanceTrunkDiscreteNet(self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
+        self.rep_trunk = DistanceTrunkDiscreteNet(
+            self.frames, self.action_dim, feature_dim, hidden_dim,
+            use_one_hot_actions=use_one_hot_actions,
+        ).to(self.device)
+        self.rep_trunk_target = DistanceTrunkDiscreteNet(
+            self.frames, self.action_dim, feature_dim, hidden_dim,
+            use_one_hot_actions=use_one_hot_actions,
+        ).to(self.device)
         self.rep_trunk_target.load_state_dict(self.rep_trunk.state_dict())
 
         # === Optimisers ===
-        self.optim_q = torch.optim.Adam(self.q_net.parameters(), lr=lr)
+        self.optim_q = torch.optim.Adam(
+            self.q_net.parameters(), lr=lr, weight_decay=1e-4)
         self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
         self.optim_rep = torch.optim.Adam(self.rep_trunk.parameters(), lr=lr)
-        init_alpha = torch.tensor(init_alpha, device=self.device).clamp(min=1e-6)
-        self.log_alpha = torch.nn.Parameter(init_alpha.log())
-        self.log_alpha.requires_grad = learn_alpha
-        self.alpha_opt = (
-            torch.optim.Adam([self.log_alpha], lr=lr) if learn_alpha else None
-        )
+
+        # SAC-style temperature: start at alpha=1.0 (log_alpha=0) unless overridden.
+        init_alpha_t = torch.tensor(init_alpha, device=self.device)
         self.learn_alpha = learn_alpha
-        self.fixed_alpha = float(init_alpha.item())
+        self.log_alpha = torch.nn.Parameter(init_alpha_t.log())
+        self.log_alpha.requires_grad = learn_alpha
+        self.alpha_opt = torch.optim.Adam(
+            [self.log_alpha], lr=lr) if learn_alpha else None
+        self.fixed_alpha = None if learn_alpha else float(init_alpha_t.item())
 
         # Use SAC-style negative target entropy; learn_alpha drives toward this.
-        self.target_entropy = -target_entropy_scale * math.log(self.action_dim)
+        self.target_entropy = -target_entropy_scale * float(self.action_dim)
 
         self.replay = AtariReplayBuffer(
             buffer_size,
@@ -147,17 +173,23 @@ class DiscreteDistAgent:
         )
 
         self.beta_ema = BetaEMA(decay=0.995)
+        self.obs_rms = RunningMeanStd(self.obs_shape, device=self.device)
         self.max_grad_norm = max_grad_norm
         self.steps = 0
         self.best_eval = -float("inf")
 
         # Respect lightweight wandb flag passed through main.py; default False when absent.
         self.lightweight_wandb = bool(kwargs.get("lightweight_wandb", True))
+        print(f"[Init] lightweight_wandb={self.lightweight_wandb}")
 
         self.K = max(1, K)
         self.kernel_softmax_temp = kernel_softmax_temp
         self.kernel_eps = kernel_eps
         self.kernel_adaptive_tau = kernel_adaptive_tau
+        self.center_qhat = center_qhat
+        self.proposal_mode = proposal_mode
+        self.proposal_topk = proposal_topk
+        self.proposal_eps = proposal_eps
         self.all_actions = torch.arange(
             self.action_dim, device=self.device, dtype=torch.long
         )
@@ -170,15 +202,25 @@ class DiscreteDistAgent:
         print(
             f"[Init] DiscreteDistAgent env={env_id} device={device} total_steps={total_steps}"
         )
-        print(f"[Init] Observation shape: {obs_shape}, Action dim: {self.action_dim}")
+        print(
+            f"[Init] Observation shape: {obs_shape}, Action dim: {self.action_dim}")
         print(f"[Init] Feature dim: {feature_dim}, Hidden dim: {hidden_dim}")
         print(f"[Init] Buffer size: {buffer_size}, Batch size: {batch_size}")
         print(f"[Init] Warmup steps: {warmup_steps}, Eval freq: {eval_freq}")
         print(f"[Init] Gamma: {gamma}, Tau: {tau}, LR: {lr}")
-        print(f"[Init] Rep gamma shape: {rep_gamma_shape}, Rep lambda: {rep_lam}")
+        print(
+            f"[Init] Rep gamma shape: {rep_gamma_shape}, Rep lambda: {rep_lam}")
         print(f"[Init] Proposal samples: {self.K}")
         alpha_mode = "learned" if self.learn_alpha else f"fixed={self.fixed_alpha:.4f}"
-        print(f"[Init] Alpha mode: {alpha_mode}, Target entropy: {self.target_entropy:.2f}")
+        print(
+            f"[Init] updates_per_step: {updates_per_step}, Entropy coef: {entropy_coef}")
+        print(
+            f"[Init] kernel_softmax_temp: {kernel_softmax_temp}, kernel_eps: {kernel_eps}, kernel_adaptive_tau: {kernel_adaptive_tau}, center_qhat: {center_qhat}")
+        print(
+            f"[Init] proposal_mode: {proposal_mode}, proposal_topk: {proposal_topk}, proposal_eps: {proposal_eps}, use_one_hot_actions: {use_one_hot_actions}")
+        print(
+            f"[Init] Alpha mode: {alpha_mode}, Target entropy: {self.target_entropy:.2f}")
+        print(f"[Init] Normalize obs: {self.normalize_obs}")
 
     @property
     def alpha(self) -> float:
@@ -192,8 +234,20 @@ class DiscreteDistAgent:
             obs_t = obs_t.unsqueeze(0)
         return obs_t
 
+    def _normalize_obs(self, obs_t: torch.Tensor) -> torch.Tensor:
+        return self._maybe_normalize_obs(obs_t, update_stats=True)
+
+    def _maybe_normalize_obs(self, obs_t: torch.Tensor, update_stats: bool = False) -> torch.Tensor:
+        if not self.normalize_obs:
+            return obs_t
+        if update_stats:
+            with torch.no_grad():
+                self.obs_rms.update(obs_t)
+        return self.obs_rms.normalize(obs_t)
+
     def act(self, obs: np.ndarray, eval_mode: bool = False) -> int:
         obs_t = self._obs_to_tensor(obs)
+        obs_t = self._maybe_normalize_obs(obs_t, update_stats=not eval_mode)
         with torch.no_grad():
             dist, logits = self.actor(obs_t)
             if eval_mode:
@@ -212,7 +266,8 @@ class DiscreteDistAgent:
         tau_min = max(0.05, 0.30 * float(base_temp))
         T_sched = 200_000
         p = min(1.0, float(self.steps) / float(T_sched))
-        tau_sched = tau_min + 0.5 * (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
+        tau_sched = tau_min + 0.5 * \
+            (tau_max - tau_min) * (1.0 + math.cos(math.pi * p))
 
         tau = torch.full((rows, 1), tau_sched, device=device)
         if self.kernel_adaptive_tau:
@@ -229,44 +284,58 @@ class DiscreteDistAgent:
         eps: float = 0.05,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Match continuous agent: in-state kernel readout with K proposals and entropy logp."""
-        K_eff = max(1, K if K is not None else self.K)
-        batch_size = obs.size(0)
+        B = obs.size(0)
+        K_eff = self.action_dim  # enumerate all actions; no stochastic proposals
 
         with torch.no_grad():
-            # Proposal actions from target policy (stop-grad)
-            _, logits_prop = self.actor_target(obs)
-            log_probs_prop = torch.log_softmax(logits_prop, dim=-1)
-            probs_prop = log_probs_prop.exp()
-            proposal_actions = torch.multinomial(
-                probs_prop, num_samples=K_eff, replacement=True
-            )
-            z_k = self.rep_trunk_target(obs, proposal_actions)
+            # Deterministically use all actions.
+            # actions_full = self.all_actions.unsqueeze(0).expand(B, -1)
+            # actions full should be one hot encoded all possible actions
+            actions_full = F.one_hot(
+                self.all_actions.unsqueeze(0).expand(B, -1),
+                num_classes=self.action_dim,
+            ).float()
+            print("actions_full shape:", actions_full.shape)
+            print(f'actions_full: {actions_full[0,:]}')
+            z_k = self.rep_trunk_target(obs, actions_full)
             z_k = F.normalize(z_k, p=2, dim=-1)
+            print("z_k shape:", z_k.shape)
             q1_k, q2_k = self.q_target(obs)
             q_min_k = torch.min(q1_k, q2_k)
-            qk = q_min_k.gather(1, proposal_actions).unsqueeze(-1)  # (B,K,1)
+            qk = q_min_k.unsqueeze(-1)  # (B,A,1)
+            print("qk shape:", qk.shape)
 
         # Current policy distribution (grad path)
-        _, logits_anchor = self.actor(obs)
+        obs_n = self._maybe_normalize_obs(obs, update_stats=False)
+        _, logits_anchor = self.actor(obs_n)
+        print("----------------\n\nlogits_anchor shape:", logits_anchor.shape)
         log_probs = torch.log_softmax(logits_anchor, dim=-1)
         probs = log_probs.exp()
+        print("probs:", probs[0, :])
 
-        # Expected anchor embedding under current policy; keeps gradients through probs.
-        actions_full = self.all_actions.unsqueeze(0).expand(batch_size, -1)
-        z_all = self.rep_trunk(obs, actions_full)
-        z_all = F.normalize(z_all, p=2, dim=-1)
-        z_anchor = (probs.unsqueeze(-1) * z_all).sum(dim=1)  # (B,H)
+        # Pass softmax probabilities directly into the rep trunk to build probability-conditioned anchors.
+        z_anchor = self.rep_trunk(obs, probs)
+        print("----------------\n\nz_anchor shape:", z_anchor.shape)
 
-        z_k_view = z_k.view(batch_size, K_eff, -1)
-        S = torch.einsum("bh,bkh->bk", z_anchor, z_k_view).clamp(-1.0, 1.0)
+        z_anchor = F.normalize(z_anchor, p=2, dim=-1)
+
+        S = torch.einsum("bh,bkh->bk", z_anchor, z_k).clamp(-1.0, 1.0)
+        print("S shape:", S.shape)
 
         tau = self._kernel_tau_instate(S, base_temp=softmax_temp)
         W = torch.softmax(S / tau, dim=-1)
         if eps > 0.0:
             W = (1.0 - eps) * W + eps / float(K_eff)
 
-        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1, keepdim=True).detach()  # (B,1,1)
-        q_tilde = qk - q_bar
+        print("W shape:", W.shape)
+        print("\n\n\n----------------")
+        if self.center_qhat:
+            q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
+                                               keepdim=True).detach()  # (B,1,1)
+            q_tilde = qk - q_bar
+        else:
+            q_tilde = qk
+
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)  # (B,1)
 
         if wandb.run is not None and not self.lightweight_wandb:
@@ -283,7 +352,8 @@ class DiscreteDistAgent:
         return Qhat, logp
 
     def evaluate(self) -> float:
-        print(f"\n[Eval] Step {self.steps}: Starting evaluation ({self.cfg.eval_episodes} episodes)...")
+        print(
+            f"\n[Eval] Step {self.steps}: Starting evaluation ({self.cfg.eval_episodes} episodes)...")
         returns = []
         for ep_idx in range(self.cfg.eval_episodes):
             obs, _ = self.eval_env.reset()
@@ -291,7 +361,8 @@ class DiscreteDistAgent:
             total = 0.0
             while not done:
                 action = self.act(obs, eval_mode=True)
-                obs, reward, terminated, truncated, _ = self.eval_env.step(action)
+                obs, reward, terminated, truncated, _ = self.eval_env.step(
+                    action)
                 total += float(reward)
                 done = terminated or truncated
             returns.append(total)
@@ -299,29 +370,33 @@ class DiscreteDistAgent:
         std_return = float(np.std(returns))
         min_return = float(np.min(returns))
         max_return = float(np.max(returns))
-        print(f"[Eval] Mean: {mean_return:.2f} ± {std_return:.2f} (Min: {min_return:.2f}, Max: {max_return:.2f})")
+        print(
+            f"[Eval] Mean: {mean_return:.2f} ± {std_return:.2f} (Min: {min_return:.2f}, Max: {max_return:.2f})")
         if wandb.run is not None:
             wandb.log({"eval/avg_reward": mean_return}, step=self.steps)
         return mean_return
 
     def _update_critics(self, batch: Dict[str, torch.Tensor]) -> float:
         obs = batch["obs"].to(self.device)
+        next_obs = batch["next_obs"].to(self.device)
+        obs_n = self._maybe_normalize_obs(obs, update_stats=False)
+        next_obs_n = self._maybe_normalize_obs(next_obs, update_stats=False)
         actions = batch["actions"].unsqueeze(-1)
         rewards = batch["rewards"].to(self.device)
         dones = batch["dones"].to(self.device)
-        next_obs = batch["next_obs"].to(self.device)
 
-        q1, q2 = self.q_net(obs)
+        q1, q2 = self.q_net(obs_n)
         q1 = q1.gather(1, actions)
         q2 = q2.gather(1, actions)
 
         with torch.no_grad():
-            _, logits_next = self.actor_target(next_obs)
+            _, logits_next = self.actor(next_obs_n)
             log_probs_next = torch.log_softmax(logits_next, dim=-1)
             probs_next = log_probs_next.exp()
-            next_q1, next_q2 = self.q_target(next_obs)
+            next_q1, next_q2 = self.q_target(next_obs_n)
             min_next_q = torch.min(next_q1, next_q2)
-            next_values = (probs_next * (min_next_q - self.alpha * log_probs_next)).sum(dim=-1)
+            next_values = (probs_next * (min_next_q -
+                           self.alpha * log_probs_next)).sum(dim=-1)
             targets = rewards + (1.0 - dones) * self.cfg.gamma * next_values
             targets = targets.unsqueeze(-1)
 
@@ -331,7 +406,8 @@ class DiscreteDistAgent:
 
         self.optim_q.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.q_net.parameters(), self.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            self.q_net.parameters(), self.max_grad_norm)
         self.optim_q.step()
 
         if wandb.run is not None and not self.lightweight_wandb:
@@ -348,23 +424,22 @@ class DiscreteDistAgent:
             eps=self.kernel_eps,
         )
 
-        alpha_val = self.alpha
-        actor_loss = (alpha_val * logp - Qhat).mean()
+        actor_loss = (self.log_alpha.exp() * logp.mean() - Qhat.mean())
 
         self.optim_actor.zero_grad()
         actor_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.actor.parameters(), self.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            self.actor.parameters(), self.max_grad_norm)
         self.optim_actor.step()
 
-        if self.learn_alpha:
-            alpha_loss = -(self.log_alpha * (logp.detach() + self.target_entropy)).mean()
-            if self.alpha_opt is None:
-                raise RuntimeError("Alpha optimizer is not initialized despite learn_alpha=True")
-            self.alpha_opt.zero_grad()
-            alpha_loss.backward()
-            self.alpha_opt.step()
-        else:
-            alpha_loss = torch.tensor(0.0, device=self.device)
+        alpha_loss = -(self.log_alpha * (logp.detach() +
+                                         self.target_entropy)).mean()
+
+        self.alpha_opt.zero_grad()
+        alpha_loss.backward()
+        torch.nn.utils.clip_grad_norm_(
+            self.log_alpha, self.max_grad_norm)
+        self.alpha_opt.step()
 
         if wandb.run is not None and not self.lightweight_wandb:
             wandb.log(
@@ -383,28 +458,26 @@ class DiscreteDistAgent:
     def _representation_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         obs = batch["obs"].to(self.device)
         next_obs = batch["next_obs"].to(self.device)
+        obs = self._maybe_normalize_obs(obs, update_stats=False)
+        next_obs = self._maybe_normalize_obs(next_obs, update_stats=False)
         actions = batch["actions"].to(self.device)
         dones = batch["dones"].to(self.device)
 
-        # Rep trunk should train end-to-end on obs and actions (no precomputed latents).
         z = self.rep_trunk(obs, actions)
 
         with torch.no_grad():
-            _, logits_next = self.actor_target(next_obs)
-            log_probs_next = torch.log_softmax(logits_next, dim=-1)
-            probs_next = log_probs_next.exp()
-            proposal_actions = torch.multinomial(
-                probs_next, num_samples=self.K, replacement=True
-            )
-            z_candidates = self.rep_trunk_target(next_obs, proposal_actions)
+            dist, _ = self.actor(next_obs)
+            action_next = dist.sample()
+            action_next = action_next.unsqueeze(-1)
+            
+            z_next = self.rep_trunk_target(next_obs, action_next)
             q1_next, q2_next = self.q_target(next_obs)
             q_min_next = torch.min(q1_next, q2_next)
-            q_candidates = q_min_next.gather(1, proposal_actions)
-            best_idx = torch.argmax(q_candidates, dim=1)
-            batch_indices = torch.arange(proposal_actions.size(0), device=self.device)
-            z_next = z_candidates[batch_indices, best_idx]
-            q1_t, q2_t = self.q_target(obs)
-            q_targ = torch.min(q1_t, q2_t).gather(1, actions.unsqueeze(-1)).squeeze(-1)
+            q_targ = q_min_next.gather(1, action_next)
+
+            print("\nz shape:", z.shape)
+            print("z_next shape:", z_next.shape)
+            print("q_targ shape:", q_targ.shape)
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z,
@@ -420,21 +493,20 @@ class DiscreteDistAgent:
 
         self.optim_rep.zero_grad()
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.rep_trunk.parameters(), self.max_grad_norm)
+        torch.nn.utils.clip_grad_norm_(
+            self.rep_trunk.parameters(), self.max_grad_norm)
         self.optim_rep.step()
 
         if wandb.run is not None and not self.lightweight_wandb:
-            wandb.log(
-                {
-                    "rep/loss": float(loss.item()),
-                    "rep/beta": info.get("beta_ema", 0.0),
-                }, step=self.steps
-            )
+                rep_logs = {f"rep/{k}": v for k, v in info.items()}
+                rep_logs.update(
+                    {"rep/loss": float(loss.item()), "step": self.steps})
+                if wandb.run is not None:
+                    wandb.log(rep_logs, step=self.steps)
         return {"rep_loss": float(loss.item()), **info}
 
     def _update_targets(self) -> None:
         polyak_update(self.q_target, self.q_net, self.cfg.tau)
-        polyak_update(self.actor_target, self.actor, self.cfg.tau)
         polyak_update(self.rep_trunk_target, self.rep_trunk, self.cfg.tau)
 
     def save_checkpoint(self, tag: str) -> None:
@@ -452,14 +524,15 @@ class DiscreteDistAgent:
     def train(self) -> None:
         print(f"\n[Train] Starting training loop...")
         print(f"[Train] Warmup phase: steps 1-{self.cfg.warmup_steps}")
-        print(f"[Train] Training phase: steps {self.cfg.warmup_steps+1}-{self.cfg.total_steps}\n")
-        
+        print(
+            f"[Train] Training phase: steps {self.cfg.warmup_steps+1}-{self.cfg.total_steps}\n")
+
         obs, _ = self.env.reset()
         episode_reward = 0.0
         episode_length = 0
         episode_count = 0
         self.steps = 0
-        
+
         while self.steps <= self.cfg.total_steps:
             self.steps += 1
             if self.steps < self.cfg.warmup_steps:
@@ -467,7 +540,8 @@ class DiscreteDistAgent:
             else:
                 action = self.act(obs, eval_mode=False)
 
-            next_obs, reward, terminated, truncated, info = self.env.step(action)
+            next_obs, reward, terminated, truncated, info = self.env.step(
+                action)
             done = terminated or truncated
             self.replay.add(obs, action, reward, next_obs, done)
 
@@ -484,32 +558,26 @@ class DiscreteDistAgent:
                             "train/episode_length": episode_length,
                         }, step=self.steps
                     )
-                # Print every episode during warmup, every 10 episodes during training
-                if self.steps < self.cfg.warmup_steps or episode_count % 10 == 0:
-                    phase = "Warmup" if self.steps < self.cfg.warmup_steps else "Train"
-                    print(f"[{phase}] Step {self.steps:7d} | Episode {episode_count:4d} | Return: {episode_reward:7.2f} | Length: {episode_length:4d} | Buffer: {len(self.replay):7d}")
-                
+
+                phase = "Warmup" if self.steps < self.cfg.warmup_steps else "Train"
+                print(f"[{phase}] Step {self.steps:7d} | Episode {episode_count:4d} | Return: {episode_reward:7.2f} | Length: {episode_length:4d} | Buffer: {len(self.replay):7d}")
+
                 obs, _ = self.env.reset()
                 episode_reward = 0.0
                 episode_length = 0
 
-            if self.steps >= self.cfg.warmup_steps and len(self.replay) >= self.cfg.batch_size:
-                # Print when starting training phase
-                if self.steps == self.cfg.warmup_steps:
-                    print(f"\n[Train] Warmup complete! Starting gradient updates...")
-                    print(f"[Train] Buffer size: {len(self.replay)}, Alpha: {self.alpha:.4f}\n")
-                
                 for _ in range(self.cfg.updates_per_step):
                     batch = self.replay.sample(self.cfg.batch_size)
                     self._update_critics(batch)
                     self._update_actor_and_alpha(batch)
                     self._representation_loss(batch)
                     self._update_targets()
-
-            if self.steps % self.cfg.eval_freq == 0:
+                # exit(0)
+            if self.steps % self.cfg.eval_freq == 0 and self.steps >= self.cfg.warmup_steps:
                 eval_return = self.evaluate()
                 if eval_return > self.best_eval:
-                    print(f"[Eval] New best return: {eval_return:.2f} (previous: {self.best_eval:.2f})")
+                    print(
+                        f"[Eval] New best return: {eval_return:.2f} (previous: {self.best_eval:.2f})")
                     self.best_eval = eval_return
                     self.save_checkpoint("best")
                 else:
@@ -517,6 +585,7 @@ class DiscreteDistAgent:
                 print()  # Empty line for readability
 
         # final checkpoint
-        print(f"\n[Train] Training complete! Total steps: {self.cfg.total_steps}")
+        print(
+            f"\n[Train] Training complete! Total steps: {self.cfg.total_steps}")
         print(f"[Train] Best eval return: {self.best_eval:.2f}")
         self.save_checkpoint("final")

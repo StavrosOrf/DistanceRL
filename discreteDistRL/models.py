@@ -8,6 +8,7 @@ from typing import Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Categorical
 
 
@@ -89,15 +90,18 @@ class DistanceTrunkDiscreteNet(nn.Module):
         feature_dim: int = 512,
         hidden_dim: int = 512,
         embed_dim: int = 128,
-        output_dim: int = 512,
+        use_one_hot_actions: bool = False,
     ) -> None:
         super().__init__()
         self.encoder = AtariEncoder(obs_channels, feature_dim)
+        self.action_dim = action_dim
+        self.use_one_hot_actions = use_one_hot_actions
         self.embedding = nn.Embedding(action_dim, embed_dim)
+        self.onehot_proj = nn.Linear(action_dim, embed_dim)
         self.net = nn.Sequential(
             nn.Linear(feature_dim + embed_dim, hidden_dim),
             nn.ReLU(inplace=True),
-            nn.Linear(hidden_dim, output_dim),
+            nn.Linear(hidden_dim, hidden_dim),
         )
 
     def forward(self, obs: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
@@ -105,17 +109,121 @@ class DistanceTrunkDiscreteNet(nn.Module):
         return self._forward_latent(state_latent, actions)
 
     def _forward_latent(self, state_latent: torch.Tensor, actions: torch.Tensor) -> torch.Tensor:
-        if actions.dim() == 1:
-            act_embed = self.embedding(actions)
-            x = torch.cat([state_latent, act_embed], dim=-1)
-            return self.net(x)
+        print(f'actions shape: {actions.shape}')
+
+        # Floating inputs are treated as probabilities / one-hot encodings regardless of use_one_hot_actions flag.
+        if torch.is_floating_point(actions):
+            if actions.dim() == 2 and actions.size(-1) == self.action_dim:
+                one_hot = actions
+                print('using provided probabilities as one-hot input (B,A)')
+                print(f'one_hot shape: {one_hot.shape}')
+                act_embed = self.onehot_proj(one_hot)
+                print(f'act_embed shape: {act_embed.shape}')
+                print(f'latent shape: {state_latent.shape}')
+                x = torch.cat([state_latent, act_embed], dim=-1)
+                print(f'x shape: {x.shape}')
+                out = self.net(x)
+                print(f'out shape: {out.shape}')
+                return out
+            if actions.dim() == 3 and actions.size(-1) == self.action_dim:
+                one_hot = actions
+                print('using provided probabilities as one-hot input (B,K,A)')
+                print(f'one_hot shape: {one_hot.shape}')
+                B, K, A = one_hot.shape
+                act_embed = self.onehot_proj(one_hot.view(B * K, A)).view(B, K, -1)
+                print(f'act_embed shape: {act_embed.shape}')
+                print(f'latent shape: {state_latent.shape}')
+                latent = state_latent.unsqueeze(1).expand(-1, K, -1)
+                print(f'latent expanded shape: {latent.shape}')
+                x = torch.cat([latent, act_embed], dim=-1)
+                print(f'x shape: {x.shape}')
+                out = self.net(x)
+                print(f'out shape: {out.shape}')
+                return out
+            raise ValueError(f"Floating-point actions must have last dim == action_dim; got {actions.shape}")
 
         if actions.dim() == 2:
-            act_embed = self.embedding(actions)  # (B, K, D)
-            latent = state_latent.unsqueeze(1).expand(-1, actions.size(1), -1)
-            x = torch.cat([latent, act_embed], dim=-1)
-            B, K, D = x.shape
-            out = self.net(x.view(B * K, D))
-            return out.view(B, K, -1)
+            B, K = actions.shape
+            if K == 1:
+                idx = actions.view(-1).long()
+                print(f'idx shape: {idx.shape}')
+                print(f'idx: {idx[0]}')
+                if self.use_one_hot_actions:
+                    one_hot = F.one_hot(idx, num_classes=self.action_dim).float()  # (B,A)
+                    print(f'one_hot shape: {one_hot.shape}')
+                    print(f'one_hot: {one_hot[0,:]}')
+                    act_embed = self.onehot_proj(one_hot)
+                else:
+                    act_embed = self.embedding(idx)
+                print(f'act_embed shape: {act_embed.shape}')
+                print(f'latent shape: {state_latent.shape}')
+                x = torch.cat([state_latent, act_embed], dim=-1)
+                print(f'x shape: {x.shape}')
+                out = self.net(x)
+                print(f'out shape: {out.shape}')
+                return out
 
-        raise ValueError("Actions tensor must be 1D or 2D (batch or batch x samples).")
+            idx = actions.long()
+            print(f'idx shape: {idx.shape}')
+            print(f'idx[0]: {idx[0]}')
+            if self.use_one_hot_actions:
+                one_hot = F.one_hot(idx.view(-1), num_classes=self.action_dim).float()  # (B*K, A)
+                print(f'one_hot shape: {one_hot.shape}')
+                print(f'one_hot[0]: {one_hot[0,:]}')
+                act_embed = self.onehot_proj(one_hot).view(B, K, -1)
+            else:
+                act_embed = self.embedding(idx)  # (B,K,D)
+            print(f'act_embed shape: {act_embed.shape}')
+            print(f'latent shape: {state_latent.shape}')
+            latent = state_latent.unsqueeze(1).expand(-1, K, -1)
+            print(f'latent expanded shape: {latent.shape}')
+            x = torch.cat([latent, act_embed], dim=-1)
+            print(f'x shape: {x.shape}')
+            out = self.net(x)
+            print(f'out shape: {out.shape}')
+            return out
+
+        if actions.dim() == 3:
+            idx = actions.long()
+            print(f'idx shape: {idx.shape}')
+            print(f'idx[0]: {idx[0]}')
+            B, K = idx.shape[:2]
+            if self.use_one_hot_actions:
+                one_hot = F.one_hot(idx.view(-1), num_classes=self.action_dim).float()  # (B*K, A)
+                print(f'one_hot shape: {one_hot.shape}')
+                print(f'one_hot[0]: {one_hot[0,:]}')
+                act_embed = self.onehot_proj(one_hot).view(B, K, -1)
+            else:
+                act_embed = self.embedding(idx)  # (B,K,D)
+            print(f'act_embed shape: {act_embed.shape}')
+            print(f'latent shape: {state_latent.shape}')
+            latent = state_latent.unsqueeze(1).expand(-1, K, -1)
+            print(f'latent expanded shape: {latent.shape}')
+            x = torch.cat([latent, act_embed], dim=-1)
+            print(f'x shape: {x.shape}')
+            out = self.net(x)
+            print(f'out shape: {out.shape}')
+            return out
+
+        if actions.dim() == 1:
+            idx = actions.long()
+            print(f'idx shape: {idx.shape}')
+            print(f'idx: {idx[0]}')
+            if self.use_one_hot_actions:
+                one_hot = F.one_hot(idx, num_classes=self.action_dim).float()  # (B,A)
+                print(f'one_hot shape: {one_hot.shape}')
+                print(f'one_hot: {one_hot[0,:]}')
+                act_embed = self.onehot_proj(one_hot)
+            else:
+                act_embed = self.embedding(idx)
+            print(f'act_embed shape: {act_embed.shape}')
+            print(f'latent shape: {state_latent.shape}')
+            x = torch.cat([state_latent, act_embed], dim=-1)
+            print(f'x shape: {x.shape}')
+            out = self.net(x)
+            print(f'out shape: {out.shape}')
+            return out
+
+        raise ValueError(f"Unsupported action tensor shape: {actions.shape}")
+
+

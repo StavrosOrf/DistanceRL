@@ -11,7 +11,7 @@ rm -rf "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null
 import os
 import time
 
-device = "cuda"  # "cpu" or "cuda"
+device = "cuda:1"  # "cpu" or "cuda"
 eval_episodes = 10
 batch_size = 256
 total_steps = 1_000_000
@@ -117,15 +117,19 @@ PYTHON_ENV = "/home/sorfanoudakis/.conda/envs/distrl/bin/python"
 # -- DiscreteDistAgent launcher with defaults and wandb logging ---
 for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
     for seed in [100]:
-        name = f'DiscreteDistAgent-{env.strip("ALE/")}-seed{seed}'
-        command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
-            f' --env-id {env}' + \
-            f' --algo DiscreteDistAgent' + \
-            f' --device {device}' + \
-            f' --seed {seed}' + \
-            f' --exp-prefix t1{name}' + \
-            ' --log_to_wandb' + \
-            '" Enter'
-        os.system(command=command)
-        print(command)
-        time.sleep(3)
+        for K in [128]:
+            for use_one_hot_actions in [0, 1]:
+                    name = f'DiscreteDistAgent-{env.strip("ALE/")}-seed{seed}'
+                    command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
+                        f' --env-id {env}' + \
+                        f' --algo DiscreteDistAgent' + \
+                        f' --device {device}' + \
+                        f' --seed {seed}' + \
+                        f' --K {K}' + \
+                        f' --use-one-hot-actions {use_one_hot_actions}' + \
+                        f' --exp-prefix sacstyle_alpha_{name}' + \
+                        ' --log_to_wandb' + \
+                        '" Enter'
+                    os.system(command=command)
+                    print(command)
+                    time.sleep(3)

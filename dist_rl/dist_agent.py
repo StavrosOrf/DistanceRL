@@ -31,6 +31,7 @@ class DistAgent:
                  target_entropy_scale: float,
                  updates_per_step: int,
                  kernel_adaptive_tau: int,
+                 center_qhat: int,
                  rep_gamma_shape: float,
                  rep_lam: float,
                  rep_huber: float,
@@ -43,6 +44,7 @@ class DistAgent:
 
         self.updates_per_step = updates_per_step
         self.kernel_adaptive_tau = True if kernel_adaptive_tau != 0 else False
+        self.center_qhat = True if center_qhat != 0 else False
         self.target_entropy_scale = target_entropy_scale
 
         self.K = K  # for in-state Qhat
@@ -134,7 +136,7 @@ class DistAgent:
         print("[Init] DistanceAgent setup complete")
         print(
             f"[Init] env={env_id}, device={device}, total_steps={total_steps}, batch_size={batch_size}, buffer_size={buffer_size}")        
-        print(f'Normalize obs: {self.normalize_obs}')
+        print(f'Normalize obs: {self.normalize_obs}, center_qhat: {self.center_qhat}')
 
     @property
     def alpha(self):
@@ -322,13 +324,11 @@ class DistAgent:
         if eps > 0.0:
             W = (1.0 - eps) * W + eps / K
 
-        # --- advantage-centering: q̃_k = q_k - \bar q  (baseline is stop-grad) ---
-        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
-                                           keepdim=True).detach()  # (B,1,1)
-        # (B,K,1)
-        q_tilde = qk - q_bar
+        # --- optional advantage-centering: q̃_k = q_k - \bar q  (baseline is stop-grad) ---
+        q_bar = (W.unsqueeze(-1) * qk).sum(dim=1, keepdim=True).detach()  # (B,1,1)
+        q_tilde = qk - q_bar if self.center_qhat else qk
 
-        # --- centered readout ---
+        # --- readout ---
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)            # (B,1)
 
         # (optional) diagnostics

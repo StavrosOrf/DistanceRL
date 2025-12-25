@@ -7,7 +7,7 @@ import yaml
 import torch
 
 from dist_rl.dist_agent import DistAgent
-from discreteDistRL.dist_agent import DiscreteDistAgent
+from discreteDistRL.discrete_dist_agent import DiscreteDistAgent
 from discreteDistRL.wrappers import make_atari_env
 from baselines.mico_agent import MICoAgent
 from baselines.dbc_agent import DBCAgent, DBCDeterministicAgent
@@ -66,13 +66,13 @@ def main():
 
     parser.add_argument("--env-id", type=str,
                         default="ALE/Pong-v5", help="Gym environment ID")
-                        # default="ALE/Breakout-v5", help="Gym environment ID")
-                        # default="Walker2d-v5", help="Gym environment ID")
+    # default="ALE/Breakout-v5", help="Gym environment ID")
+    # default="Walker2d-v5", help="Gym environment ID")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", type=str, default="cuda")
 
     # wandb args
-    parser.add_argument("--lightweight_wandb", action="store_false", default=True,
+    parser.add_argument("--lightweight_wandb", action="store_true", default=False,
                         help="If true, wandb will not save the code.")
     parser.add_argument("--exp-prefix", type=str, default="test")
     parser.add_argument("--group-name", type=str, default="")
@@ -81,9 +81,10 @@ def main():
                         help="If true, logs will be sent to wandb.")
 
     # algorithm args
-    parser.add_argument("--algo", type=str, default="DistAgent") # DistAgent
+    parser.add_argument("--algo", type=str, default="DistAgent")  # DistAgent
     parser.add_argument("--save-dir", type=str,
                         default="./saved_models/")
+    parser.add_argument('--logdir', type=str, default='./logs')
     parser.add_argument("--K", type=int, default=64)
     parser.add_argument("--total-steps", type=int, default=1_000_000)
     parser.add_argument('--warmup-steps', type=int, default=5000,
@@ -118,7 +119,18 @@ def main():
                         help='Multiplier applied to -action_dim when computing the entropy target.')
     parser.add_argument('--kernel-adaptive-tau', type=int, default=0,
                         help='Whether to adapt kernel temperature per batch (1=True, 0=False).')
-    parser.add_argument('--logdir', type=str, default='./logs')
+    parser.add_argument('--center-qhat', type=int, default=1,
+                        help='Whether to center in-state Qhat with a baseline (1=True, 0=False).')
+
+    # DiscreteDistAgent-specific args
+    parser.add_argument('--proposal-mode', type=str, default='multinomial',
+                        help='Proposal mode for discrete Qhat (multinomial|topk|eps_mix).')
+    parser.add_argument('--proposal-topk', type=int, default=0,
+                        help='If >0 and proposal-mode=topk, limit proposals to top-k actions by policy logit.')
+    parser.add_argument('--proposal-eps', type=float, default=0.0,
+                        help='Epsilon for eps_mix proposal; mixes uniform with policy probs.')
+    parser.add_argument('--use-one-hot-actions', type=int, default=0,
+                        help='If 1, rep trunk uses one-hot action inputs instead of embeddings.')
 
     args = parser.parse_args()
 
@@ -139,7 +151,7 @@ def main():
         group_name = args.group_name + args.env_id
 
     args.exp_prefix = exp_prefix
-    
+
     model_save_path = Path(args.save_dir) / exp_prefix
     model_save_path.mkdir(parents=True, exist_ok=True)
     args.model_save_path = str(model_save_path)
@@ -174,7 +186,6 @@ def main():
         agent = agent_cls(**args.__dict__)
         agent.train()
         return
-
 
     if args.algo in AGENTS and args.env_id in continuous_envs:
         agent_cls = AGENTS[args.algo]

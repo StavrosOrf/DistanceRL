@@ -1,6 +1,6 @@
 """Discrete-distance reinforcement learning package for Atari experiments."""
 
-from .dist_agent import DiscreteDistAgent
+from .discrete_dist_agent import DiscreteDistAgent
 from .wrappers import make_atari_env
 from .models import (
     AtariEncoder,
