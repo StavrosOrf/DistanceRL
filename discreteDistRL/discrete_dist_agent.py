@@ -46,7 +46,7 @@ class DiscreteDistAgent:
         rep_lam: float = 0.5,
         rep_huber: float = 0.2,
         warmup_steps: int = 50_000,
-        normalize_obs: bool = True,
+        normalize_obs: bool = False,
         K: int = 32,
         kernel_softmax_temp: float = 1.0,
         kernel_eps: float = 0.05,
@@ -90,7 +90,7 @@ class DiscreteDistAgent:
         self.rep_lam = rep_lam
         self.rep_huber = rep_huber
         self.warmup_steps = warmup_steps
-        self.normalize_obs = bool(normalize_obs)
+        self.normalize_obs = False
         self.center_qhat = center_qhat
         self.proposal_mode = proposal_mode
         self.proposal_topk = proposal_topk
@@ -158,7 +158,7 @@ class DiscreteDistAgent:
             [self.log_alpha], lr=lr) if learn_alpha else None
         self.fixed_alpha = None if learn_alpha else float(init_alpha_t.item())
 
-        self.target_entropy = -target_entropy_scale * math.log(float(self.action_dim))
+        self.target_entropy = target_entropy_scale * math.log(float(self.action_dim))
 
         self.replay = AtariReplayBuffer(
             buffer_size,
@@ -297,7 +297,8 @@ class DiscreteDistAgent:
             z_k = F.normalize(z_k, p=2, dim=-1)
             if self.verbose:
                 print("z_k shape:", z_k.shape)
-            q1_k, q2_k = self.q_target(obs_n)
+            # q1_k, q2_k = self.q_target(obs_n)
+            q1_k, q2_k = self.q_net(obs_n)
             q_min_k = torch.min(q1_k, q2_k)
             qk = q_min_k.unsqueeze(-1)  # (B,A,1)
             if self.verbose:
@@ -312,12 +313,19 @@ class DiscreteDistAgent:
         if self.verbose:
             print("probs:", probs[0, :])
 
-        # Pass softmax probabilities directly into the rep trunk to build probability-conditioned anchors.
-        z_anchor = self.rep_trunk(obs_n, probs)
-        if self.verbose:
-            print("----------------\n\nz_anchor shape:", z_anchor.shape)
-
+        # Build z(s,a) for all discrete actions using one-hot action inputs; this keeps the
+        # nonlinearity inside each action head and then averages in representation space.
+        # z_all = self.rep_trunk(obs_n, actions_full)
+        # z_all = F.normalize(z_all, p=2, dim=-1)
+        # z_anchor = (probs.unsqueeze(-1) * z_all).sum(dim=1)
+        
+        z_anchor = torch.sum(probs.unsqueeze(-1) * z_k, dim=1)    # (B, H)
         z_anchor = F.normalize(z_anchor, p=2, dim=-1)
+
+        
+        if self.verbose:
+            print("----------------\n\nanchor z_all shape:", z_anchor.shape)
+            print("z_anchor shape:", z_anchor.shape)
 
         S = torch.einsum("bh,bkh->bk", z_anchor, z_k).clamp(-1.0, 1.0)
         if self.verbose:
@@ -436,13 +444,14 @@ class DiscreteDistAgent:
             self.actor.parameters(), self.max_grad_norm)
         self.optim_actor.step()
 
-        alpha_loss = (self.log_alpha.exp() * (-logp.detach() -
+        entropy = (-logp).detach()
+        alpha_loss = (self.log_alpha.exp() * (entropy -
                                          self.target_entropy)).mean()
 
         self.alpha_opt.zero_grad()
         alpha_loss.backward()
         torch.nn.utils.clip_grad_norm_(
-            self.log_alpha, self.max_grad_norm)
+            [self.log_alpha], self.max_grad_norm)
         self.alpha_opt.step()
 
         if wandb.run is not None and not self.lightweight_wandb:
@@ -451,6 +460,8 @@ class DiscreteDistAgent:
                     "train/actor_loss": float(actor_loss.item()),
                     "train/entropy": float((-logp).mean().item()),
                     "train/alpha": float(self.alpha),
+                    "train/alpha_loss": float(alpha_loss.item()),
+                    "train/alpha_grad_norm": float(self.log_alpha.grad.norm().item()),
                     "train/qhat_mean": float(Qhat.mean().item()),
                 }, step=self.steps,
             )

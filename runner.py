@@ -11,7 +11,7 @@ rm -rf "${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)" 2>/dev/null
 import os
 import time
 
-device = "cuda:1"  # "cpu" or "cuda"
+device = "cuda"  # "cpu" or "cuda"
 eval_episodes = 10
 batch_size = 256
 total_steps = 1_000_000
@@ -129,7 +129,7 @@ for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
                     f' --warmup-steps 50000' + \
                     f' --center-qhat 0' + \
                     f' --use-one-hot-actions {use_one_hot_actions}' + \
-                    f' --exp-prefix FixedQreward_{name}' + \
+                    f' --exp-prefix AltBetterAnchorUsingQOnlineFixedEntropy_{name}' + \
                     ' --log_to_wandb' + \
                     '" Enter'
                 os.system(command=command)
