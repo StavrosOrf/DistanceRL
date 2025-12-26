@@ -105,7 +105,6 @@ class DistAgent:
             self.rep_trunk.parameters(), lr=self.lr)
 
         # === Temperature alpha ===
-
         self.target_entropy = - \
             self.target_entropy_scale * float(self.act_dim)
         self.log_alpha = torch.nn.Parameter(

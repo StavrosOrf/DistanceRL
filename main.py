@@ -26,6 +26,8 @@ from dist_rl.ablations.agents import (
     DistAblationB7LaplacianKernel,
     DistAblationB8BilinearSim,
     DistAblationB9NoAdaptiveTau,
+    DistAblationRewardOnly,
+    DistAblationRewardOnlyN64,
 )
 from baselines.classic_rl.sb3_train import train_sb3_agent
 from dist_rl.utils import set_seed
@@ -40,6 +42,7 @@ continuous_envs = MUJOCO_ENVS + BOX2D_ENVS
 
 AGENTS = {
     "DistAgent": DistAgent,
+    "v2DistAgent": DistAgent,  # alias for logging/naming in wandb
     "DiscreteDistAgent": DiscreteDistAgent,
     "MICo": MICoAgent,
     "DBC": DBCAgent,
@@ -57,6 +60,8 @@ AGENTS = {
     "DistAblationB7": DistAblationB7LaplacianKernel,
     "DistAblationB8": DistAblationB8BilinearSim,
     "DistAblationB9NoAdaptiveTau": DistAblationB9NoAdaptiveTau,
+    "DistAblationRewardOnly": DistAblationRewardOnly,
+    "DistAblationRewardOnlyN64": DistAblationRewardOnlyN64,
     "REDQ": REDQMainAgent,
 }
 

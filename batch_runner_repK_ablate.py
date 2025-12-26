@@ -6,12 +6,12 @@ from dist_rl.config import DistRLConfig
 
 # Target tasks for full runs
 TASKS = {
-    "Walker2d-v5": 1_000_000,
+    "HalfCheetah-v5": 1_000_000,
     "Humanoid-v5": 1_000_000,
 }
 
 # Baseline algorithm to sweep
-ALGO = "DistAgent"
+ALGO = "v2DistAgent"
 
 # Grids for one-at-a-time ablations
 REP_GAMMA_SHAPE_GRID = [0.25, 0.5, 1.0, 1.5, 2.0, 2.5]
@@ -31,7 +31,7 @@ def build_command(env: str, seed: int, rep_gamma_shape: float, K: int,
         f" --device {device}"
         f" --seed {seed}"
         f" --exp-prefix {exp_prefix}"
-        f" --group-name RepK_Ablation"
+        f" --group-name RepK_Ablation_Fixed"
         f" --project_name {project_name}"
         f" --total-steps {steps}"
         " --log_to_wandb"

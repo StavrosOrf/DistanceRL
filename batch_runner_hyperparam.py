@@ -39,7 +39,7 @@ def batch_runner():
     # ---------------- General configuration ----------------
 
     partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
-    algo_list = ['DistAgent']
+    algo_list = ['v2DistAgent']
     group_name = "HyperparamGrid"
     project_name = "DistRL_Hyper"  # DistRL_Rep
 

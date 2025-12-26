@@ -5,13 +5,13 @@ from dist_rl.config import DistRLConfig
 
 # Target tasks for full runs
 TASKS = {
-    "Walker2d-v5": 1_000_000,
+    "HalfCheetah-v5": 1_000_000,
     "Humanoid-v5": 1_000_000,
 }
 
 # Run all ablations
 ABLATION_ALGOS = [
-    "DistAgent",  # baseline
+    # "v2DistAgent",  # baseline
     "DistAblationA1",
     # "DistAblationA2",
     "DistAblationA3",
@@ -19,8 +19,10 @@ ABLATION_ALGOS = [
     # "DistAblationA5",
     "DistAblationB1",
     # "DistAblationB2",
-    "DistAblationB3",
+    # "DistAblationB3",
     "DistAblationB9NoAdaptiveTau",
+    "DistAblationRewardOnlyN64",
+    "DistAblationRewardOnly",
     # "DistAblationB4",
     # "DistAblationB5",
     # "DistAblationB6",
@@ -44,7 +46,7 @@ def build_command(env: str, algo: str, seed: int, project_name: str = "DistRL_Ab
         f" --device {device}"
         f" --seed {seed}"
         f" --exp-prefix {exp_prefix}"
-        f" --group-name AblationExps_"
+        f" --group-name AblationExpsFixed_"
         f" --project_name {project_name}"
         f" --total-steps {steps}"
         " --log_to_wandb"

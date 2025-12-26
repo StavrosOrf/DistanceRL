@@ -105,6 +105,57 @@ class RolloutBuffer:
             self.dones[idxs].detach(),
         )
 
+    def get_nstep_batch(self, batch_size: int, nstep: int, gamma: float) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Sample n-step trajectories with discounting; stops early on done.
+
+        Returns: (obs_t, next_obs_{t+n'}, act_t, return_n, done_n) where n'<=nstep if episode ended early.
+        """
+        if nstep < 1:
+            raise ValueError("nstep must be >= 1")
+        max_valid = self.max_size if self.entry_count >= self.max_size else (self.ptr + 1)
+        if max_valid < 1:
+            raise ValueError("RolloutBuffer is empty; cannot sample batch.")
+        idxs = np.random.choice(max_valid, size=batch_size, replace=False)
+
+        obs_batch = []
+        next_obs_batch = []
+        act_batch = []
+        ret_batch = []
+        done_batch = []
+
+        for idx in idxs:
+            obs_batch.append(self.obs[idx])
+            act_batch.append(self.actions[idx])
+
+            acc = 0.0
+            cur = int(idx)
+            done_flag = False
+            last_next = self.next_obs[cur]
+
+            for k in range(nstep):
+                r = float(self.rewards[cur].item())
+                acc += (gamma ** k) * r
+                done_flag = bool(self.dones[cur].item())
+                last_next = self.next_obs[cur]
+                if done_flag:
+                    break
+                if self.entry_count < self.max_size and cur == self.ptr:
+                    # Do not wrap into unfilled region before buffer is full.
+                    break
+                cur = (cur + 1) % self.max_size
+
+            ret_batch.append(acc)
+            next_obs_batch.append(last_next)
+            done_batch.append(float(done_flag))
+
+        return (
+            torch.stack(obs_batch).detach(),
+            torch.stack(next_obs_batch).detach(),
+            torch.stack(act_batch).detach(),
+            torch.as_tensor(ret_batch, device=self.device, dtype=torch.float32).detach(),
+            torch.as_tensor(done_batch, device=self.device, dtype=torch.float32).detach(),
+        )
+
     # alias for compatibility
     def sample(self, batch_size: int):
         return self.get_batch(batch_size)

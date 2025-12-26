@@ -21,9 +21,11 @@ ABLATION_ALGOS = [
     # "DistAblationB6",
     # "DistAblationB7",
     # "DistAblationB8",
-    "DBC",
-    "DBCDet",
-    "MICo",
+    "DistAblationRewardOnlyN64",
+    # "DistAblationB9NoAdaptiveTau",
+    # "DBC",
+    # "DBCDet",
+    # "MICo",
 ]
 
 # Minimal, low-memory run settings
