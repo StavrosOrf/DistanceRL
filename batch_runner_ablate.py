@@ -124,7 +124,7 @@ conda deactivate
 
 
 def main():
-    seeds = [10,20,30,40]
+    seeds = [42, 32, 22, 12, 2]
     use_tmux = False  # set to False to use SLURM
     
     algos = ABLATION_ALGOS

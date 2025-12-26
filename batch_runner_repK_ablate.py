@@ -110,7 +110,8 @@ conda deactivate
 
 
 def main():
-    seeds = [10,20,30,40]
+    # seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
+    seeds = [42, 32, 22, 12, 2]
     use_tmux = False  # set to False to use SLURM
 
     for env in TASKS:
@@ -124,7 +125,8 @@ def main():
         for K in K_GRID:
             for seed in seeds:
                 cmd = build_command(env, seed, rep_gamma_shape=base_gamma, K=K)
-                prefix = _tmux_safe_name(f"{ALGO}_{env}_K{K}_g{base_gamma}_seed{seed}")
+                prefix = _tmux_safe_name(
+                    f"{ALGO}_{env}_K{K}_g{base_gamma}_seed{seed}")
                 write_and_submit([cmd], hours=hours, cpu_cores=cpu_cores,
                                  use_tmux=use_tmux, run_name_prefix=prefix)
 
@@ -132,8 +134,10 @@ def main():
         base_K = cfg.get("K", 64)
         for rep_gamma_shape in REP_GAMMA_SHAPE_GRID:
             for seed in seeds:
-                cmd = build_command(env, seed, rep_gamma_shape=rep_gamma_shape, K=base_K)
-                prefix = _tmux_safe_name(f"{ALGO}_{env}_K{base_K}_g{rep_gamma_shape}_seed{seed}")
+                cmd = build_command(
+                    env, seed, rep_gamma_shape=rep_gamma_shape, K=base_K)
+                prefix = _tmux_safe_name(
+                    f"{ALGO}_{env}_K{base_K}_g{rep_gamma_shape}_seed{seed}")
                 write_and_submit([cmd], hours=hours, cpu_cores=cpu_cores,
                                  use_tmux=use_tmux, run_name_prefix=prefix)
 
