@@ -114,7 +114,7 @@ def main():
     parser.add_argument('--rep-fixed-scale', type=float, default=1.0,
                         help='Fixed beta scale for A4 ablation (ignored otherwise).')
 
-    parser.add_argument('--normalize-obs', type=int, default=1,
+    parser.add_argument('--normalize-obs', type=int, default=0,
                         help='Whether to normalize observations (1=True, 0=False).')
 
     # Actor Training args
@@ -134,8 +134,10 @@ def main():
                         help='If >0 and proposal-mode=topk, limit proposals to top-k actions by policy logit.')
     parser.add_argument('--proposal-eps', type=float, default=0.0,
                         help='Epsilon for eps_mix proposal; mixes uniform with policy probs.')
-    parser.add_argument('--use-one-hot-actions', type=int, default=1,
+    parser.add_argument('--use-one-hot-actions', type=int, default=0,
                         help='If 1, rep trunk uses one-hot action inputs instead of embeddings.')
+    parser.add_argument('--shared-encoder', type=int, default=1,
+                        help='If 1, share a single Atari encoder across actor/critic/rep nets (DiscreteDistAgent only).')
 
     args = parser.parse_args()
 

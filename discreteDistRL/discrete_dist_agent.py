@@ -16,6 +16,7 @@ from dist_rl.representations import BetaEMA, recursive_nstep_cosine_loss_ema
 
 from .buffers import AtariReplayBuffer
 from .models import (
+    AtariEncoder,
     CategoricalActorNet,
     TwinQDiscreteNet,
     DistanceTrunkDiscreteNet,
@@ -64,6 +65,7 @@ class DiscreteDistAgent:
         hidden_size: int = 512,
         feature_dim: int = 512,
         verbose: bool = False,
+        shared_encoder: bool = False,
         **kwargs
     ) -> None:
 
@@ -120,13 +122,25 @@ class DiscreteDistAgent:
         # Toggle observation normalization to mirror continuous agent behavior.
         self.normalize_obs = bool(normalize_obs)
 
+        # Optional shared encoder for actor/critic/representation trunks.
+        self.shared_encoder = bool(shared_encoder)
+        encoder_shared = None
+        if self.shared_encoder:
+            encoder_shared = AtariEncoder(self.frames, feature_dim)
+            encoder_shared = encoder_shared.to(self.device)
+        self.encoder_shared = encoder_shared
+
         # === Networks ===
         hidden_dim = hidden_size
         self.actor = CategoricalActorNet(
-            self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
+            self.frames, self.action_dim, feature_dim, hidden_dim,
+            encoder=self.encoder_shared,
+        ).to(self.device)
 
         self.q_net = TwinQDiscreteNet(
-            self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
+            self.frames, self.action_dim, feature_dim, hidden_dim,
+            encoder=self.encoder_shared,
+        ).to(self.device)
         self.q_target = TwinQDiscreteNet(
             self.frames, self.action_dim, feature_dim, hidden_dim).to(self.device)
         self.q_target.load_state_dict(self.q_net.state_dict())
@@ -135,6 +149,7 @@ class DiscreteDistAgent:
             self.frames, self.action_dim, feature_dim, hidden_dim,
             use_one_hot_actions=use_one_hot_actions,
             verbose=verbose,
+            encoder=self.encoder_shared,
         ).to(self.device)
         self.rep_trunk_target = DistanceTrunkDiscreteNet(
             self.frames, self.action_dim, feature_dim, hidden_dim,
@@ -144,10 +159,29 @@ class DiscreteDistAgent:
         self.rep_trunk_target.load_state_dict(self.rep_trunk.state_dict())
 
         # === Optimisers ===
-        self.optim_q = torch.optim.Adam(
-            self.q_net.parameters(), lr=lr, weight_decay=1e-4)
-        self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
-        self.optim_rep = torch.optim.Adam(self.rep_trunk.parameters(), lr=lr)
+        self.optim_shared_encoder = None
+        if self.shared_encoder:
+            shared_params = list(self.encoder_shared.parameters())
+            shared_param_ids = {id(p) for p in shared_params}
+
+            def exclude_shared(params):
+                return [p for p in params if id(p) not in shared_param_ids]
+
+            self.optim_shared_encoder = torch.optim.Adam(
+                shared_params, lr=lr, weight_decay=1e-4)
+            self.optim_q = torch.optim.Adam(
+                exclude_shared(self.q_net.parameters()), lr=lr, weight_decay=1e-4)
+            self.optim_actor = torch.optim.Adam(
+                exclude_shared(self.actor.parameters()), lr=lr)
+            self.optim_rep = torch.optim.Adam(
+                exclude_shared(self.rep_trunk.parameters()), lr=lr)
+            self.shared_encoder_params = shared_params
+        else:
+            self.optim_q = torch.optim.Adam(
+                self.q_net.parameters(), lr=lr, weight_decay=1e-4)
+            self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
+            self.optim_rep = torch.optim.Adam(self.rep_trunk.parameters(), lr=lr)
+            self.shared_encoder_params = []
 
         # SAC-style temperature: start at alpha=1.0 (log_alpha=0) unless overridden.
         init_alpha_t = torch.tensor(init_alpha, device=self.device)
@@ -216,6 +250,7 @@ class DiscreteDistAgent:
         print(
             f"[Init] Alpha mode: {alpha_mode}, Target entropy: {self.target_entropy:.2f}")
         print(f"[Init] Normalize obs: {self.normalize_obs}")
+        print(f"[Init] Shared encoder: {self.shared_encoder}")
 
     @property
     def alpha(self) -> float:
@@ -483,25 +518,39 @@ class DiscreteDistAgent:
         z = self.rep_trunk(obs, actions)
 
         with torch.no_grad():
-            dist, _ = self.actor(next_obs)
-            action_next = dist.sample()
-            action_next = action_next.unsqueeze(-1)
+            # --- policy at next state ---
+            _, logits_next = self.actor(next_obs)                        # (B, A)
+            log_probs_next = torch.log_softmax(logits_next, dim=-1)      # (B, A)
+            probs_next = log_probs_next.exp()                            # (B, A)
 
-            z_next = self.rep_trunk_target(next_obs, action_next)
-            q1_next, q2_next = self.q_target(next_obs)
-            q_min_next = torch.min(q1_next, q2_next)
-            if self.verbose:
-                print("\naction_next shape:", action_next[0, :])
-                print("q_min_next shape:", q_min_next[0, :])
-            q_targ = q_min_next.gather(1, action_next)
-            if self.verbose:
-                print("q_targ:", q_targ[0, :])
-                print("z shape:", z.shape)
-                print("z_next shape:", z_next.shape)
-                print("q_targ shape:", q_targ.shape)
-            
-        q_targ = rewards.unsqueeze(-1) + \
-            (1.0 - dones.unsqueeze(-1)) * self.gamma * q_targ
+            B = next_obs.size(0)
+            A = self.action_dim
+
+            # --- compute z(next_obs, a) for all actions a ---
+            # actions_full: (B, A, A) one-hot for each action
+            actions_full = torch.nn.functional.one_hot(
+                self.all_actions.unsqueeze(0).expand(B, -1), num_classes=A
+            ).float().to(next_obs.device)
+
+            z_next_all = self.rep_trunk_target(next_obs, actions_full)   # (B, A, feature_dim)
+
+            # --- expected next embedding z_pi(next_obs) = sum_a pi(a|s') z(s',a) ---
+            z_next = torch.sum(probs_next.unsqueeze(-1) * z_next_all, dim=1)  # (B, feature_dim)
+
+            # --- expected next value ---
+            q1_next, q2_next = self.q_target(next_obs)                   # (B, A)
+            q_min_next = torch.min(q1_next, q2_next)                     # (B, A)
+
+            # Option 1: plain expectation (usually good)
+            # v_next = torch.sum(probs_next * q_min_next, dim=1, keepdim=True)  # (B, 1)
+
+            # Option 2: soft expectation (often better aligned with your SAC-style critic)
+            alpha = self.log_alpha.exp()
+            v_next = torch.sum(probs_next * (q_min_next - alpha * log_probs_next),
+                               dim=1, keepdim=True)  # (B, 1)
+
+        # bootstrap target utility
+        q_targ = rewards.unsqueeze(-1) + (1.0 - dones.unsqueeze(-1)) * self.gamma * v_next
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z,
@@ -576,10 +625,16 @@ class DiscreteDistAgent:
             # Update step
             if self.steps > self.warmup_steps:
                 for _ in range(self.updates_per_step):
+                    if self.optim_shared_encoder is not None:
+                        self.optim_shared_encoder.zero_grad(set_to_none=True)
                     batch = self.replay.sample(self.batch_size)
                     self._update_critics(batch)
                     self._update_actor_and_alpha(batch)
                     self._representation_loss(batch)
+                    if self.optim_shared_encoder is not None:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.shared_encoder_params, self.max_grad_norm)
+                        self.optim_shared_encoder.step()
                     self._update_targets()
 
             if done:
