@@ -180,7 +180,8 @@ class DiscreteDistAgent:
             self.optim_q = torch.optim.Adam(
                 self.q_net.parameters(), lr=lr, weight_decay=1e-4)
             self.optim_actor = torch.optim.Adam(self.actor.parameters(), lr=lr)
-            self.optim_rep = torch.optim.Adam(self.rep_trunk.parameters(), lr=lr)
+            self.optim_rep = torch.optim.Adam(
+                self.rep_trunk.parameters(), lr=lr)
             self.shared_encoder_params = []
 
         # SAC-style temperature: start at alpha=1.0 (log_alpha=0) unless overridden.
@@ -192,7 +193,8 @@ class DiscreteDistAgent:
             [self.log_alpha], lr=lr) if learn_alpha else None
         self.fixed_alpha = None if learn_alpha else float(init_alpha_t.item())
 
-        self.target_entropy = target_entropy_scale * math.log(float(self.action_dim))
+        self.target_entropy = target_entropy_scale * \
+            math.log(float(self.action_dim))
 
         self.replay = AtariReplayBuffer(
             buffer_size,
@@ -228,6 +230,23 @@ class DiscreteDistAgent:
         if wandb.run is not None and not self.lightweight_wandb:
             wandb.run.log_code(".")
 
+        # --- kernel/pi mixing schedule (fast early learning) ---
+        self.kernel_pi_mix_init = float(kwargs.get(
+            "kernel_pi_mix_init", 1.0))   # start as SAC
+        self.kernel_pi_mix_final = float(kwargs.get(
+            "kernel_pi_mix_final", 0.0))  # end as pure kernel
+        self.kernel_pi_mix_steps = int(
+            kwargs.get("kernel_pi_mix_steps", 300_000))
+
+        # --- target entropy anneal (prevents staying near-uniform forever) ---
+        # Use log(|A|) scale (not |A|).
+        self.target_entropy_max = float(
+            target_entropy_scale) * math.log(float(self.action_dim))
+        self.target_entropy_min = float(kwargs.get(
+            "target_entropy_min_scale", 0.25)) * math.log(float(self.action_dim))
+        self.entropy_anneal_steps = int(
+            kwargs.get("entropy_anneal_steps", 300_000))
+
         print(
             f"[Init] DiscreteDistAgent env={env_id} device={device} total_steps={total_steps}"
         )
@@ -251,6 +270,19 @@ class DiscreteDistAgent:
             f"[Init] Alpha mode: {alpha_mode}, Target entropy: {self.target_entropy:.2f}")
         print(f"[Init] Normalize obs: {self.normalize_obs}")
         print(f"[Init] Shared encoder: {self.shared_encoder}")
+
+    def _lin_anneal(self, start: float, end: float, duration: int) -> float:
+        if duration <= 0:
+            return end
+        p = min(1.0, float(self.steps) / float(duration))
+        return start + p * (end - start)
+
+    def _kernel_pi_mix_coef(self) -> float:
+        # lambda_t: 1.0 -> 0.0 (default)
+        return self._lin_anneal(self.kernel_pi_mix_init, self.kernel_pi_mix_final, self.kernel_pi_mix_steps)
+
+    def _target_entropy_now(self) -> float:
+        return self._lin_anneal(self.target_entropy_max, self.target_entropy_min, self.entropy_anneal_steps)
 
     @property
     def alpha(self) -> float:
@@ -313,87 +345,101 @@ class DiscreteDistAgent:
         softmax_temp: float = 1.0,
         eps: float = 0.05,
     ) -> tuple[torch.Tensor, torch.Tensor]:
-        """Match continuous agent: in-state kernel readout with K proposals and entropy logp."""
+        """
+        In-state kernel readout + expected log-prob for SAC-style alpha update.
+
+        Returns:
+        Qhat: (B,1)
+        logp: (B,1) where logp = E_a~pi [log pi(a|s)] = sum_a pi(a|s) log pi(a|s)
+        """
         B = obs.size(0)
+        A = self.action_dim
+
+        # normalize obs consistently for actor/critic/rep
         obs_n = self._maybe_normalize_obs(obs, update_stats=False)
-        
+
+        # enumerate all discrete actions once (B,A,A)
+        actions_full = torch.nn.functional.one_hot(
+            self.all_actions, num_classes=A).float()  # (A,A)
+        actions_full = actions_full.unsqueeze(0).expand(
+            B, -1, -1)                           # (B,A,A)
+
+        # compute z(s,a) + Q(s,a) without critic grads flowing into actor
         with torch.no_grad():
-            # Deterministically use all actions.
-            # actions_full = self.all_actions.unsqueeze(0).expand(B, -1)
-            # actions full should be one hot encoded all possible actions
-            actions_full = F.one_hot(
-                self.all_actions.unsqueeze(0).expand(B, -1),
-                num_classes=self.action_dim,
-            ).float()
-            if self.verbose:
-                print("actions_full shape:", actions_full.shape)
-                print(f'actions_full: {actions_full[0,:]}')
-            z_k = self.rep_trunk_target(obs_n, actions_full)
-            z_k = F.normalize(z_k, p=2, dim=-1)
-            if self.verbose:
-                print("z_k shape:", z_k.shape)
-            # q1_k, q2_k = self.q_target(obs_n)
-            q1_k, q2_k = self.q_net(obs_n)
-            q_min_k = torch.min(q1_k, q2_k)
-            qk = q_min_k.unsqueeze(-1)  # (B,A,1)
-            if self.verbose:
-                print("qk shape:", qk.shape)
+            z_all = self.rep_trunk_target(
+                obs_n, actions_full)         # (B,A,H)
+            z_all = torch.nn.functional.normalize(
+                z_all, p=2, dim=-1)  # (B,A,H)
 
-        # Current policy distribution (grad path)
-        _, logits_anchor = self.actor(obs_n)
-        if self.verbose:
-            print("----------------\n\nlogits_anchor shape:", logits_anchor.shape)
-        log_probs = torch.log_softmax(logits_anchor, dim=-1)
-        probs = log_probs.exp()
-        if self.verbose:
-            print("probs:", probs[0, :])
+            # (B,A) (or q_target if you prefer)
+            q1_all, q2_all = self.q_net(obs_n)
+            q_min = torch.min(q1_all, q2_all)                          # (B,A)
+            # (B,A,1)
+            qk = q_min.unsqueeze(-1)
 
-        # Build z(s,a) for all discrete actions using one-hot action inputs; this keeps the
-        # nonlinearity inside each action head and then averages in representation space.
-        # z_all = self.rep_trunk(obs_n, actions_full)
-        # z_all = F.normalize(z_all, p=2, dim=-1)
-        # z_anchor = (probs.unsqueeze(-1) * z_all).sum(dim=1)
-        
-        z_anchor = torch.sum(probs.unsqueeze(-1) * z_k, dim=1)    # (B, H)
-        z_anchor = F.normalize(z_anchor, p=2, dim=-1)
+        # current policy (grad path)
+        _, logits = self.actor(obs_n)                                  # (B,A)
+        log_probs = torch.log_softmax(logits, dim=-1)                  # (B,A)
+        probs = log_probs.exp()                                        # (B,A)
 
-        
-        if self.verbose:
-            print("----------------\n\nanchor z_all shape:", z_anchor.shape)
-            print("z_anchor shape:", z_anchor.shape)
+        # anchor: expectation AFTER nonlinearity in representation space
+        z_anchor = torch.sum(probs.unsqueeze(-1) * z_all, dim=1)        # (B,H)
+        z_anchor = torch.nn.functional.normalize(z_anchor, p=2, dim=-1)
 
-        S = torch.einsum("bh,bkh->bk", z_anchor, z_k).clamp(-1.0, 1.0)
-        if self.verbose:
-            print("S shape:", S.shape)
+        # similarities + kernel weights
+        S = torch.einsum("bh,bah->ba", z_anchor,
+                         z_all).clamp(-1.0, 1.0)   # (B,A)
 
-        tau = self._kernel_tau_instate(S, base_temp=softmax_temp)
+        tau = self._kernel_tau_instate(
+            S, base_temp=softmax_temp)          # (B,1)
+        # (B,A)
         W = torch.softmax(S / tau, dim=-1)
         if eps > 0.0:
-            W = (1.0 - eps) * W + eps / self.action_dim
+            W = (1.0 - eps) * W + eps / float(A)
 
-        if self.verbose:
-            print("W shape:", W.shape)
-            print("\n\n\n----------------")
+        # --- NEW: mix kernel weights with pi weights early ---
+        lam = self._kernel_pi_mix_coef()                                   # scalar
+        if lam > 0.0:
+            W_mix = (1.0 - lam) * W + lam * \
+                probs                           # (B,A)
+        else:
+            W_mix = W
+
+        # optional baseline centering uses mixed weights
         if self.center_qhat:
-            q_bar = (W.unsqueeze(-1) * qk).sum(dim=1,
-                                               keepdim=True).detach()  # (B,1,1)
+            q_bar = (W_mix.unsqueeze(-1) * qk).sum(dim=1,
+                                                   keepdim=True).detach()  # (B,1,1)
             q_tilde = qk - q_bar
         else:
             q_tilde = qk
 
-        Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)  # (B,1)
+        # (B,1)
+        Qhat = (W_mix.unsqueeze(-1) * q_tilde).sum(dim=1)
 
+        # expected log-prob (=-entropy)
+        logp = (probs * log_probs).sum(dim=-1,
+                                       keepdim=True)                # (B,1)
+
+        # diagnostics: effective number of actions under W_mix
         if wandb.run is not None and not self.lightweight_wandb:
+            with torch.no_grad():
+                W_ent = -(W_mix * (W_mix + 1e-8).log()
+                          ).sum(dim=-1)         # (B,)
+                neff_W = torch.exp(W_ent).mean().item()
+                pi_ent = -(probs * (probs + 1e-8).log()
+                           ).sum(dim=-1).mean().item()
+
             wandb.log(
                 {
                     "kernel_instate/mean_tau": float(tau.mean().item()),
                     "kernel_instate/qhat_abs_mean": float(Qhat.abs().mean().item()),
+                    "kernel_instate/pi_mix_lambda": float(lam),
+                    "kernel_instate/neff_Wmix": float(neff_W),
+                    "kernel_instate/pi_entropy": float(pi_ent),
                 },
                 step=self.steps,
             )
 
-        # Use expected log-prob (=-entropy) for SAC-style alpha update.
-        logp = (probs * log_probs).sum(dim=-1, keepdim=True)
         return Qhat, logp
 
     def evaluate(self) -> float:
@@ -462,7 +508,7 @@ class DiscreteDistAgent:
 
     def _update_actor_and_alpha(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         obs = batch["obs"].to(self.device)
-        # print("\n\n[Actor Update]")
+
         Qhat, logp = self._qhat_in_state_norm(
             obs,
             K=self.K,
@@ -470,8 +516,12 @@ class DiscreteDistAgent:
             eps=self.kernel_eps,
         )
 
-        actor_loss = (self.log_alpha.exp() * logp.mean()
-                      - Qhat).mean()
+        # Use learnable alpha when enabled; detach for actor to avoid coupling its grads.
+        alpha = self.log_alpha.exp() if self.learn_alpha else torch.tensor(self.fixed_alpha, device=self.device)
+        alpha_detached = alpha.detach()
+
+        # actor: minimize alpha * E[log pi] - Qhat
+        actor_loss = (alpha_detached * logp - Qhat).mean()
 
         self.optim_actor.zero_grad()
         actor_loss.backward()
@@ -479,31 +529,37 @@ class DiscreteDistAgent:
             self.actor.parameters(), self.max_grad_norm)
         self.optim_actor.step()
 
-        entropy = (-logp).detach()
-        alpha_loss = (self.log_alpha.exp() * (entropy -
-                                         self.target_entropy)).mean()
+        # alpha: minimize alpha * (H(pi) - H_target)
+        entropy = (-logp).detach()                            # (B,1)
+        target_entropy = self._target_entropy_now()            # scalar
 
-        self.alpha_opt.zero_grad()
-        alpha_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            [self.log_alpha], self.max_grad_norm)
-        self.alpha_opt.step()
+        alpha_loss_item = 0.0
+        if self.learn_alpha:
+            target_entropy_t = torch.tensor(
+                target_entropy, device=self.device, dtype=entropy.dtype
+            )
+            alpha_loss = (alpha * (entropy - target_entropy_t)).mean()
+
+            self.alpha_opt.zero_grad()
+            alpha_loss.backward()
+            torch.nn.utils.clip_grad_norm_([self.log_alpha], self.max_grad_norm)
+            self.alpha_opt.step()
+            alpha_loss_item = float(alpha_loss.item())
 
         if wandb.run is not None and not self.lightweight_wandb:
             wandb.log(
                 {
                     "train/actor_loss": float(actor_loss.item()),
-                    "train/entropy": float((-logp).mean().item()),
+                    "train/entropy": float(entropy.mean().item()),
+                    "train/target_entropy": float(target_entropy),
                     "train/alpha": float(self.alpha),
-                    "train/alpha_loss": float(alpha_loss.item()),
-                    "train/alpha_grad_norm": float(self.log_alpha.grad.norm().item()),
+                    "train/alpha_loss": float(alpha_loss_item),
                     "train/qhat_mean": float(Qhat.mean().item()),
-                }, step=self.steps,
+                },
+                step=self.steps,
             )
-        return {
-            "actor_loss": float(actor_loss.item()),
-            "alpha_loss": float(alpha_loss.item()),
-        }
+
+        return {"actor_loss": float(actor_loss.item()), "alpha_loss": float(alpha_loss_item)}
 
     def _representation_loss(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         obs = batch["obs"].to(self.device)
@@ -519,8 +575,10 @@ class DiscreteDistAgent:
 
         with torch.no_grad():
             # --- policy at next state ---
-            _, logits_next = self.actor(next_obs)                        # (B, A)
-            log_probs_next = torch.log_softmax(logits_next, dim=-1)      # (B, A)
+            _, logits_next = self.actor(
+                next_obs)                        # (B, A)
+            log_probs_next = torch.log_softmax(
+                logits_next, dim=-1)      # (B, A)
             probs_next = log_probs_next.exp()                            # (B, A)
 
             B = next_obs.size(0)
@@ -532,14 +590,18 @@ class DiscreteDistAgent:
                 self.all_actions.unsqueeze(0).expand(B, -1), num_classes=A
             ).float().to(next_obs.device)
 
-            z_next_all = self.rep_trunk_target(next_obs, actions_full)   # (B, A, feature_dim)
+            z_next_all = self.rep_trunk_target(
+                next_obs, actions_full)   # (B, A, feature_dim)
 
             # --- expected next embedding z_pi(next_obs) = sum_a pi(a|s') z(s',a) ---
-            z_next = torch.sum(probs_next.unsqueeze(-1) * z_next_all, dim=1)  # (B, feature_dim)
+            z_next = torch.sum(probs_next.unsqueeze(-1) *
+                               z_next_all, dim=1)  # (B, feature_dim)
 
             # --- expected next value ---
-            q1_next, q2_next = self.q_target(next_obs)                   # (B, A)
-            q_min_next = torch.min(q1_next, q2_next)                     # (B, A)
+            q1_next, q2_next = self.q_target(
+                next_obs)                   # (B, A)
+            q_min_next = torch.min(
+                q1_next, q2_next)                     # (B, A)
 
             # Option 1: plain expectation (usually good)
             # v_next = torch.sum(probs_next * q_min_next, dim=1, keepdim=True)  # (B, 1)
@@ -550,7 +612,8 @@ class DiscreteDistAgent:
                                dim=1, keepdim=True)  # (B, 1)
 
         # bootstrap target utility
-        q_targ = rewards.unsqueeze(-1) + (1.0 - dones.unsqueeze(-1)) * self.gamma * v_next
+        q_targ = rewards.unsqueeze(-1) + (1.0 -
+                                          dones.unsqueeze(-1)) * self.gamma * v_next
 
         loss, info = recursive_nstep_cosine_loss_ema(
             z,
@@ -621,7 +684,7 @@ class DiscreteDistAgent:
             obs = next_obs
             episode_reward += float(reward)
             episode_length += 1
-            
+
             # Update step
             if self.steps > self.warmup_steps:
                 for _ in range(self.updates_per_step):
@@ -653,7 +716,6 @@ class DiscreteDistAgent:
                 obs, _ = self.env.reset()
                 episode_reward = 0.0
                 episode_length = 0
-            
 
                 # exit(0)
             if self.steps % self.eval_freq == 0 and self.steps >= self.warmup_steps:
