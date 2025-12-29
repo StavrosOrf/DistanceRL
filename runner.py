@@ -121,7 +121,7 @@ use_one_hot_actions = 1
 for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
     for seed in [100]:
         for K in [128]:
-            for shared_encoder in [0, 1]:
+            for shared_encoder in [1]:
                 name = f'DiscreteDistAgent-{env.strip("ALE/")}-seed{seed}'
                 command = 'tmux new-session -d \; send-keys "  ' + PYTHON_ENV + ' main.py' + \
                     f' --env-id {env}' + \
@@ -135,7 +135,7 @@ for env in ['ALE/Pong-v5']:  # MUJOCO_ENVS:
                     f' --center-qhat 0' + \
                     f' --shared-encoder {shared_encoder}' + \
                     f' --use-one-hot-actions {use_one_hot_actions}' + \
-                    f' --exp-prefix Opt2FFixed_{name}' + \
+                    f' --exp-prefix CHangedParamOpt2Fixed_{name}' + \
                     ' --log_to_wandb' + \
                     '" Enter'
                 os.system(command=command)

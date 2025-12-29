@@ -234,9 +234,9 @@ class DiscreteDistAgent:
         self.kernel_pi_mix_init = float(kwargs.get(
             "kernel_pi_mix_init", 1.0))   # start as SAC
         self.kernel_pi_mix_final = float(kwargs.get(
-            "kernel_pi_mix_final", 0.0))  # end as pure kernel
+            "kernel_pi_mix_final", 0.2))  # end as pure kernel
         self.kernel_pi_mix_steps = int(
-            kwargs.get("kernel_pi_mix_steps", 300_000))
+            kwargs.get("kernel_pi_mix_steps", 1_000_000))
 
         # --- target entropy anneal (prevents staying near-uniform forever) ---
         # Use log(|A|) scale (not |A|).

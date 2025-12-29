@@ -50,7 +50,8 @@ class CategoricalActorNet(nn.Module):
         encoder: Optional[nn.Module] = None,
     ):
         super().__init__()
-        self.encoder = encoder if encoder is not None else AtariEncoder(obs_channels, feature_dim)
+        self.encoder = encoder if encoder is not None else AtariEncoder(
+            obs_channels, feature_dim)
         self.policy = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -76,7 +77,8 @@ class TwinQDiscreteNet(nn.Module):
         encoder: Optional[nn.Module] = None,
     ):
         super().__init__()
-        self.encoder = encoder if encoder is not None else AtariEncoder(obs_channels, feature_dim)
+        self.encoder = encoder if encoder is not None else AtariEncoder(
+            obs_channels, feature_dim)
         self.q1 = nn.Sequential(
             nn.Linear(feature_dim, hidden_dim),
             nn.ReLU(inplace=True),
@@ -94,6 +96,7 @@ class TwinQDiscreteNet(nn.Module):
         q2 = self.q2(state_latent)
         return q1, q2
 
+
 class DistanceTrunkDiscreteNet(nn.Module):
     """Encoder + action-conditioned representation trunk using action embeddings."""
 
@@ -109,7 +112,8 @@ class DistanceTrunkDiscreteNet(nn.Module):
     ) -> None:
         super().__init__()
         embed_dim = hidden_dim // 4
-        self.encoder = encoder if encoder is not None else AtariEncoder(obs_channels, feature_dim)
+        self.encoder = encoder if encoder is not None else AtariEncoder(
+            obs_channels, feature_dim)
         self.action_dim = action_dim
         self.use_one_hot_actions = use_one_hot_actions
         self.verbose = verbose
@@ -129,7 +133,7 @@ class DistanceTrunkDiscreteNet(nn.Module):
         self,
         state_latent: torch.Tensor,
         actions: torch.Tensor,
-        ) -> torch.Tensor:
+    ) -> torch.Tensor:
         """
         Compute latent representation z = f([h(obs), e(actions)]).
 
@@ -176,7 +180,8 @@ class DistanceTrunkDiscreteNet(nn.Module):
                 else:
                     # (B, K, A) -> (B, K, embed_dim)
                     B, K, _ = actions.shape
-                    act_embed = self.onehot_proj(actions.reshape(B * K, A)).reshape(B, K, -1)
+                    act_embed = self.onehot_proj(
+                        actions.reshape(B * K, A)).reshape(B, K, -1)
             else:
                 # Use embedding matrix directly: e = p^T * E
                 embed_w = self.embedding.weight  # (A, embed_dim)
@@ -186,7 +191,8 @@ class DistanceTrunkDiscreteNet(nn.Module):
                 else:
                     # (B, K, A) -> (B*K, A) @ (A, embed_dim) -> (B*K, embed_dim) -> (B, K, embed_dim)
                     B, K, _ = actions.shape
-                    act_embed = (actions.reshape(B * K, A) @ embed_w).reshape(B, K, -1)
+                    act_embed = (actions.reshape(B * K, A) @
+                                 embed_w).reshape(B, K, -1)
 
         else:
             # actions is integer indices: (B,) or (B, K)
@@ -199,12 +205,14 @@ class DistanceTrunkDiscreteNet(nn.Module):
                 # Convert indices -> one-hot -> onehot_proj
                 if actions.dim() == 1:
                     # (B,) -> (B, A) -> (B, embed_dim)
-                    one_hot = torch.nn.functional.one_hot(actions.long(), num_classes=A).float()
+                    one_hot = torch.nn.functional.one_hot(
+                        actions.long(), num_classes=A).float()
                     act_embed = self.onehot_proj(one_hot)
                 else:
                     # (B, K) -> (B*K, A) -> (B, K, embed_dim)
                     B, K = actions.shape
-                    one_hot = torch.nn.functional.one_hot(actions.long().reshape(B * K), num_classes=A).float()
+                    one_hot = torch.nn.functional.one_hot(
+                        actions.long().reshape(B * K), num_classes=A).float()
                     act_embed = self.onehot_proj(one_hot).reshape(B, K, -1)
             else:
                 # Classic embedding lookup
@@ -223,8 +231,11 @@ class DistanceTrunkDiscreteNet(nn.Module):
         else:
             # (B, K, embed_dim): repeat h across K
             B, K, D = act_embed.shape
-            h_rep = h.unsqueeze(1).expand(B, K, h.shape[-1])  # (B, K, hidden_dim)
-            x = torch.cat([h_rep, act_embed], dim=-1)         # (B, K, hidden_dim+embed_dim)
-            z = self.net(x.reshape(B * K, -1)).reshape(B, K, -1)  # (B, K, feature_dim)
+            h_rep = h.unsqueeze(1).expand(
+                B, K, h.shape[-1])  # (B, K, hidden_dim)
+            # (B, K, hidden_dim+embed_dim)
+            x = torch.cat([h_rep, act_embed], dim=-1)
+            z = self.net(x.reshape(B * K, -1)).reshape(B,
+                                                       K, -1)  # (B, K, feature_dim)
 
         return z
