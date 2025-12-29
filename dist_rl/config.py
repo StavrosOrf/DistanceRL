@@ -6,7 +6,7 @@ class DistRLConfig:
     halfcheetah = {
         "total_steps": 1_000_000,
         "buffer_size": 1_000_000,
-        "K": 256,
+        "K": 128,
         "batch_size": 256,
         "lr": 1e-3,
         "target_entropy_scale": 1,
