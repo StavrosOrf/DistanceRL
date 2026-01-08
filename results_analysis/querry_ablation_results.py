@@ -63,8 +63,6 @@ def _fetch_history_with_retry(run, keys, pandas=True, max_attempts=3, delay_secs
 def data_fetcher():
     api = wandb.Api(timeout=API_TIMEOUT_SECS)
 
-    # Replace 'your_project_name' and 'your_entity_name' with your actual project and entity
-    project_name = "DistRL_Exps"  # DistRL_Rep
     entity_name = "stavrosorf"
 
     # Display the filtered runs with group names
@@ -72,13 +70,16 @@ def data_fetcher():
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    for project_name in ["DistRL_Exps", "DistRL_Rep"]:
-    # for project_name in ["DistRL_Exps", "DistRL_Rep", "DistRL_Ablations"]:
-    # for project_name in ["DistRL_Exps"]:
+    for project_name in ["DistRL_RepK_Ablations"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")
         print(f"Total runs fetched: {len(runs)}")
         for i, run in tqdm.tqdm(enumerate(runs), total=len(runs)):
+                        
+            #only parse form gorup_name RepK_Ablation_FixedHumanoid-v5 and RepK_Ablation_FixedHalfCheetah-v5
+            if not (run.group and (run.group.startswith("RepK_Ablation_Fixed"))):
+                # print(f'Skipping run {run.name} with group {run.group}')
+                continue
 
             # Handle config - W&B wraps values in {"value": ...} format
             config_raw = run.config
@@ -97,24 +98,10 @@ def data_fetcher():
             env_id = config['env_id']
             seed = config['seed']
             
-            # if env_id == 'Humanoid-v5':
-            #     run.delete()  # delete the run
-            #     continue
-            # else:
-            #     continue
 
             if project_name == "DistRL_Rep" and algo == 'DistAgent' and env_id in ENV_TO_RUN:
                 continue
 
-            if algo == 'SACDistanceAgentNew':
-                continue
-
-            if algo in SB3_ALGOS and project_name != "DistRL_Exps":
-                continue
-
-            # Allow ablation algos to pass through regardless of project
-            if algo in ABLATION_ALGOS:
-                pass
 
             print(
                 f"Run {i+1}/{len(runs)}: - Algo: {algo} - Env: {env_id} - Seed: {seed}")
@@ -136,6 +123,13 @@ def data_fetcher():
                 continue
 
             best_reward = data['eval_reward'].max()
+            train_steps = int(data['step'].max())
+
+            is_dist_agent = algo in ['DistAgent', 'v2DistAgent']
+            k_val = config.get('K', -999) if is_dist_agent else -999
+            rep_gamma_shape = config.get('rep_gamma_shape', -999) if is_dist_agent else -999
+            
+            print(f'rep_gamma_shape: {rep_gamma_shape}, k_val: {k_val}')
 
             if np.array(history["_runtime"])[-1]/3600 < 1:
                 continue
@@ -145,6 +139,9 @@ def data_fetcher():
                 "env": env_id,
                 "seed": seed,
                 "runtime": round(np.array(history["_runtime"])[-1]/3600, 2),
+                "train_steps": train_steps,
+                "K": k_val,
+                "rep_gamma_shape": rep_gamma_shape,
                 "best": best_reward
 
             }
@@ -161,12 +158,12 @@ def data_fetcher():
     if not os.path.exists("./results_analysis/data"):
         os.makedirs("./results_analysis/data")
 
-    df.to_csv("./results_analysis/data/results_summary.csv",
+    df.to_csv("./results_analysis/data/repK_results_summary.csv",
               index=False)
 
-    run_results.to_csv("./results_analysis/data/results_full.csv",
+    run_results.to_csv("./results_analysis/data/repK_results_full.csv",
                        index=False)
-    print("Results saved to results_full.csv")
+    print("Results saved to repK_results_full.csv")
 
 
 def extract_eval_rewards(run, algo, env, seed) -> pd.DataFrame:
