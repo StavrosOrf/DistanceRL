@@ -3,9 +3,11 @@
 from pathlib import Path
 import argparse
 import math
+from typing import Optional, Sequence
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib import ticker
 import seaborn as sns
 
 
@@ -182,18 +184,103 @@ def apply_ema_smoothing(df: pd.DataFrame, smoothing_weight: float) -> pd.DataFra
     )
     
     return df
-    
-    return df
+
+
+def _select_best_repk_variant(repk_df: pd.DataFrame, env: str) -> Optional[pd.DataFrame]:
+    """Pick the best v2DistAgent variant for a specific environment.
+
+    The variant is chosen by computing the max reward per (K, rep_gamma_shape, seed)
+    run and then selecting the configuration with the highest mean of those maxima.
+    """
+    env_df = repk_df[repk_df["env"] == env]
+    if len(env_df) == 0:
+        print(f"No repK v2DistAgent data found for {env}; keeping existing DistAgent results.")
+        return None
+
+    required_cols = {"K", "rep_gamma_shape"}
+    if not required_cols.issubset(env_df.columns):
+        print(f"Missing repK hyperparameter columns for {env}; skipping repK override.")
+        return None
+
+    run_max = (
+        env_df
+        .groupby(["K", "rep_gamma_shape", "seed"])["eval_reward"]
+        .max()
+        .reset_index(name="max_reward")
+    )
+
+    config_stats = (
+        run_max
+        .groupby(["K", "rep_gamma_shape"])["max_reward"]
+        .mean()
+        .reset_index(name="mean_max_reward")
+        .sort_values("mean_max_reward", ascending=False)
+    )
+
+    best = config_stats.iloc[0]
+    best_mask = (env_df["K"] == best["K"]) & (env_df["rep_gamma_shape"] == best["rep_gamma_shape"])
+    best_rows = env_df[best_mask].copy()
+    best_rows["algo"] = "DistAgent"
+
+    seed_count = run_max[(run_max["K"] == best["K"]) & (run_max["rep_gamma_shape"] == best["rep_gamma_shape"])]
+    seed_count = seed_count["seed"].nunique()
+    print(
+        f"Using repK v2DistAgent for {env}: K={best['K']}, rep_gamma_shape={best['rep_gamma_shape']} "
+        f"(mean max reward={best['mean_max_reward']:.1f} over {seed_count} seed(s))."
+    )
+
+    return best_rows
+
+
+def override_distagent_with_repk(
+    base_df: pd.DataFrame,
+    repk_csv_path: Optional[Path],
+    target_envs: Sequence[str] = ("Humanoid-v5", "HalfCheetah-v5"),
+    repk_algo_name: str = "v2DistAgent",
+) -> pd.DataFrame:
+    """Replace DistAgent runs with the best repK v2DistAgent variants for select envs."""
+    if repk_csv_path is None:
+        return base_df
+
+    repk_csv_path = Path(repk_csv_path)
+    if not repk_csv_path.exists():
+        print(f"repK results not found at {repk_csv_path}; skipping repK override.")
+        return base_df
+
+    repk_df = load_results(repk_csv_path)
+
+    repk_mask = repk_df["algo"].str.lower() == repk_algo_name.lower()
+    repk_df = repk_df[repk_mask]
+    if len(repk_df) == 0:
+        print(f"No rows with algo={repk_algo_name} found in repK results; skipping override.")
+        return base_df
+
+    updated_df = base_df.copy()
+    for env in target_envs:
+        env_rows = _select_best_repk_variant(repk_df, env)
+        if env_rows is None or len(env_rows) == 0:
+            continue
+
+        drop_mask = (
+            (updated_df["env"] == env)
+            & (updated_df["algo"].str.lower().isin(["distagent", repk_algo_name.lower()]))
+        )
+        updated_df = updated_df[~drop_mask]
+        updated_df = pd.concat([updated_df, env_rows], ignore_index=True)
+
+    return updated_df
 
 
 def visualize(csv_path: Path,
               output_dir: Path,
+              repk_csv: Optional[Path] = None,
               show: bool=False,
               ema_alpha: float=0.0,
               max_step: int=1_000_000,
               print_summary: bool=True) -> None:
     
     df = load_results(csv_path)
+    df = override_distagent_with_repk(df, repk_csv)
     
     envs = sorted(df["env"].unique())
     if not envs:
@@ -302,7 +389,8 @@ def generate_latex_table(csv_path: Path,
                         output_dir: Path,
                         target_envs: list = None,
                         drop_algos: list = None,
-                        max_step: int = None) -> None:
+                        max_step: int = None,
+                        repk_csv: Optional[Path] = None) -> None:
     """Generate LaTeX table with max average results (mean ± std) for each algorithm-environment pair.
     
     Args:
@@ -313,6 +401,7 @@ def generate_latex_table(csv_path: Path,
         max_step: Maximum training step to include (None = all)
     """
     df = load_results(csv_path)
+    df = override_distagent_with_repk(df, repk_csv)
     
     # Drop unwanted algorithms
     if drop_algos:
@@ -344,9 +433,12 @@ def generate_latex_table(csv_path: Path,
     
     # Calculate mean and std across seeds for each (env, algo) combination
     stats = max_rewards.groupby(['env', 'algo'])['max_reward'].agg(['mean', 'std', 'count']).reset_index()
-    
-    # Calculate total (average across all environments) for each algorithm
-    total_stats = max_rewards.groupby('algo')['max_reward'].agg(['mean', 'std']).reset_index()
+
+    # Calculate totals by summing per-environment means (environment-balanced totals)
+    env_mean_matrix = stats.pivot(index='env', columns='algo', values='mean')
+    total_sums = env_mean_matrix.sum(axis=0)
+    total_stats = total_sums.reset_index()
+    total_stats.columns = ['algo', 'total_sum']
     
     # Pivot to create table: rows=environments, columns=algorithms (VERTICAL)
     pivot_mean = stats.pivot(index='env', columns='algo', values='mean')
@@ -356,7 +448,7 @@ def generate_latex_table(csv_path: Path,
     envs = sorted(pivot_mean.index)
     
     # Sort algorithms by total performance (ascending), but put DistAgent last
-    total_sorted = total_stats.sort_values('mean', ascending=True)  # Worst to best
+    total_sorted = total_stats.sort_values('total_sum', ascending=True)  # Worst to best
     algos = total_sorted['algo'].tolist()
     
     # Move DistAgent to the end if it exists
@@ -431,9 +523,8 @@ def generate_latex_table(csv_path: Path,
     latex_lines.append("\\midrule")
     total_row_values = []
     for algo in algos:
-        total_mean = total_stats[total_stats['algo'] == algo]['mean'].values[0]
-        total_std = total_stats[total_stats['algo'] == algo]['std'].values[0]
-        total_cell = f"${total_mean:.0f} \\pm {total_std:.0f}$"
+        total_sum = total_stats[total_stats['algo'] == algo]['total_sum'].values[0]
+        total_cell = f"${total_sum:.0f}$"
         total_row_values.append(total_cell)
     
     total_row = "\\textbf{Total} & " + " & ".join(total_row_values) + " \\\\"
@@ -499,9 +590,8 @@ def generate_latex_table(csv_path: Path,
     print("-" * len(header_plain))
     total_row_values_plain = []
     for algo in algos:
-        total_mean = total_stats[total_stats['algo'] == algo]['mean'].values[0]
-        total_std = total_stats[total_stats['algo'] == algo]['std'].values[0]
-        total_cell = f"{total_mean:.0f} ± {total_std:.0f}"
+        total_sum = total_stats[total_stats['algo'] == algo]['total_sum'].values[0]
+        total_cell = f"{total_sum:.0f}"
         total_row_values_plain.append(f"{total_cell:>{col_width}}")
     
     total_row_plain = f"{'Total':<{col_width}}" + "".join(total_row_values_plain)
@@ -512,6 +602,7 @@ def generate_latex_table(csv_path: Path,
 
 def visualize_paper_quality_mujoco(csv_path: Path,
                                     output_dir: Path,
+                                    repk_csv: Optional[Path] = None,
                                     show: bool=False,
                                     ema_alpha: float=0.4,
                                     max_step: int=2_000_000) -> None:
@@ -525,6 +616,7 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         max_step: Maximum training step to include
     """
     df = load_results(csv_path)
+    df = override_distagent_with_repk(df, repk_csv)
     
     # Filter to only the 4 main MuJoCo environments
     target_envs = [ 'Walker2d-v5', 'Humanoid-v5','Ant-v5', 'HalfCheetah-v5',]
@@ -588,7 +680,7 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         
         if len(env_df) == 0:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(env_names.get(env, env), fontsize=16, fontweight='bold')
+            ax.set_title(env_names.get(env, env), fontsize=18, fontweight='bold')
             continue
         
         # Plot each algorithm
@@ -616,21 +708,26 @@ def visualize_paper_quality_mujoco(csv_path: Path,
                                color=line[0].get_color())
         
         # Styling
-        ax.set_title(env_names.get(env, env), fontsize=16, fontweight='bold', pad=10)
-        ax.set_xlabel('Training Steps', fontsize=16)
+        ax.set_title(env_names.get(env, env), fontsize=18, fontweight='bold', pad=10)
+        ax.set_xlabel('Training Steps', fontsize=18)
         
         if idx == 0:
-            ax.set_ylabel('Episode Return', fontsize=16)
+            ax.set_ylabel('Episode Return', fontsize=18)
         
         # Format x-axis to show steps in millions
         ax.ticklabel_format(style='scientific', axis='x', scilimits=(6,6))
         
         # xlim fromzerp to max_step
-        ax.set_xlim(0, max_step)
+        ax.set_xlim(0, max_step)        
+        ax.set_ylim(bottom=0)
         
+        # Use more granular y-ticks and scientific notation for better readability
+        ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=6, prune=None))
+        ax.ticklabel_format(style='sci', axis='y', scilimits=(3, 3))
+
         #change x-tick and y-tick font size
-        ax.tick_params(axis='x', labelsize=14)
-        ax.tick_params(axis='y', labelsize=14)
+        ax.tick_params(axis='x', labelsize=17)
+        ax.tick_params(axis='y', labelsize=17)
         
         # Grid
         ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -686,10 +783,14 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot training curves from CSV results")
     parser.add_argument("--csv", type=Path, default=Path("results_analysis/data/main_results_full.csv"),
                         help="Path to results_full.csv")
+    parser.add_argument("--repk-csv", type=Path, default=Path("results_analysis/data/repK_results_full.csv"),
+                        help="Path to repK_results_full.csv (for best v2DistAgent variants)")
+    parser.add_argument("--no-repk-override", action="store_true",
+                        help="Disable replacing DistAgent with best repK v2DistAgent for Humanoid/HalfCheetah")
     parser.add_argument("--out", type=Path, default=Path("results_analysis/plots"),
                         help="Directory to save plot images")
     parser.add_argument("--show", default=False, action="store_true", help="Display plots interactively")
-    parser.add_argument("--ema-alpha", type=float, default=0.75,
+    parser.add_argument("--ema-alpha", type=float, default=0.85,
                         help="EMA smoothing factor (0-1). Higher=more smoothing. 0=disabled. Recommended: 0.1-0.5")
     parser.add_argument("--max-step", type=int, default=1_000_000,
                         help="Maximum training step to plot (set negative to include all)")
@@ -705,6 +806,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     max_step = args.max_step if args.max_step >= 0 else None
+    repk_csv = None if args.no_repk_override else args.repk_csv
     
     if args.latex_table:
         # Generate LaTeX table with max average results for ALL environments
@@ -714,13 +816,15 @@ def main() -> None:
             args.out,
             target_envs=None,  # None = all environments
             drop_algos=drop_algos,
-            max_step=max_step
+            max_step=max_step,
+            repk_csv=repk_csv,
         )
     elif args.paper_quality:
         # Generate publication-quality figure for main MuJoCo environments
         visualize_paper_quality_mujoco(
             args.csv,
             args.out,
+            repk_csv=repk_csv,
             show=args.show,
             ema_alpha=args.ema_alpha,
             max_step=max_step
@@ -729,6 +833,7 @@ def main() -> None:
         # Generate standard multi-environment overview
         visualize(args.csv,
                   args.out,
+                  repk_csv=repk_csv,
                   show=args.show,
                   ema_alpha=args.ema_alpha,
                   max_step=max_step,

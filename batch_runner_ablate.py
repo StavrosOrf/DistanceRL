@@ -11,18 +11,18 @@ TASKS = {
 
 # Run all ablations
 ABLATION_ALGOS = [
-    # "v2DistAgent",  # baseline
+    "v2DistAgent",  # baseline
     "DistAblationA1",
     # "DistAblationA2",
-    "DistAblationA3",
+    # "DistAblationA3",
     "DistAblationA4",
     # "DistAblationA5",
-    "DistAblationB1",
+    # "DistAblationB1",
     # "DistAblationB2",
     # "DistAblationB3",
-    "DistAblationB9NoAdaptiveTau",
-    "DistAblationRewardOnlyN64",
-    "DistAblationRewardOnly",
+    # "DistAblationB9NoAdaptiveTau",
+    # "DistAblationRewardOnlyN64",
+    # "DistAblationRewardOnly",
     # "DistAblationB4",
     # "DistAblationB5",
     # "DistAblationB6",

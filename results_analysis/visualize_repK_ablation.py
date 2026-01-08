@@ -91,6 +91,39 @@ def summarize_results(max_rewards: pd.DataFrame) -> None:
     print(summary.to_string())
 
 
+def print_k_gamma_tables(max_rewards: pd.DataFrame, target_gamma: float = 1.5, target_k: int = 256) -> None:
+    """Print max average reward tables for K and gamma sweeps."""
+
+    def _print_table(df: pd.DataFrame, group_col: str, header: str) -> None:
+        print("\n" + "=" * 70)
+        print(header)
+        print("=" * 70)
+        for env in sorted(df["env"].unique()):
+            env_df = df[df["env"] == env]
+            stats = (
+                env_df.groupby(group_col)["max_reward"]
+                .agg(["mean", "std", "count"])
+                .reset_index()
+                .sort_values("mean", ascending=False)
+            )
+            print(f"\n{env}")
+            print("-" * 70)
+            print(f"{group_col:<12s} {'Mean Max':<12s} {'Std':<12s} {'Seeds':<8s}")
+            for _, row in stats.iterrows():
+                mean_val = row["mean"]
+                std_val = 0.0 if pd.isna(row["std"]) else row["std"]
+                count = int(row["count"])
+                std_str = f"± {std_val:6.1f}" if count > 1 else "±   0.0"
+                print(f"{str(row[group_col]):<12s} {mean_val:10.1f} {std_str:<12s} {count:<8d}")
+        print("\n" + "=" * 70 + "\n")
+
+    k_view = filter_for_k_ablation(max_rewards, target_gamma=target_gamma)
+    _print_table(k_view, "K", f"K ABLATION (gamma={target_gamma})")
+
+    gamma_view = filter_for_gamma_ablation(max_rewards, target_k=target_k)
+    _print_table(gamma_view, "rep_gamma_shape", f"GAMMA ABLATION (K={target_k})")
+
+
 def _format_env_label(env: str) -> str:
     """Format environment name without version and in bold."""
     if "-v" in env:
@@ -364,6 +397,7 @@ def main() -> None:
         raise ValueError(f"Requested environments not found: {sorted(missing)}")
 
     summarize_results(max_rewards)
+    print_k_gamma_tables(max_rewards)
     plot_ablation_boxplots(
         max_rewards=max_rewards,
         envs=envs,

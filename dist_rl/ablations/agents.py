@@ -23,7 +23,7 @@ class DistAblationA1RandomEncoder(DistAgent):
         for p in self.rep_trunk_targ.parameters():
             p.requires_grad = False
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         return _zero_rep_loss(self.device)
 
 
@@ -37,7 +37,7 @@ class DistAblationA2ActorOnlyEncoder(DistAgent):
             list(self.actor.parameters()) + list(self.rep_trunk.parameters()), lr=3e-4
         )
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         return _zero_rep_loss(self.device)
 
 
@@ -56,7 +56,7 @@ class DistAblationA4NoBetaScaling(DistAgent):
         self.rep_fixed_scale = kwargs.pop("rep_fixed_scale", 1.0)
         super().__init__(*args, **kwargs)
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
             next_obs_n = self.obs_rms.normalize(next_obs)
@@ -76,6 +76,8 @@ class DistAblationA4NoBetaScaling(DistAgent):
 
             q1t, q2t = self.q_targ(obs_n, act)
             q_targ = torch.min(q1t, q2t).squeeze(-1)
+        
+        q_targ = rew + self.gamma * (1.0 - done) * q_targ
 
         # Fixed-scale variant of the recursive loss: replace beta EMA with constant.
         z_norm = F.normalize(z, p=2, dim=1)
@@ -185,7 +187,7 @@ class DistAblationB2EuclideanSim(DistAgent):
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)
         return Qhat, logp
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         # Use negative L2 distance for both current and target embeddings.
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
@@ -297,7 +299,7 @@ class DistAblationB6PoincareSim(DistAgent):
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)
         return Qhat, logp
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
             next_obs_n = self.obs_rms.normalize(next_obs)
@@ -386,7 +388,7 @@ class DistAblationB7LaplacianKernel(DistAgent):
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)
         return Qhat, logp
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
             next_obs_n = self.obs_rms.normalize(next_obs)
@@ -487,7 +489,7 @@ class DistAblationB8BilinearSim(DistAgent):
         Qhat = (W.unsqueeze(-1) * q_tilde).sum(dim=1)
         return Qhat, logp
 
-    def _rep_loss(self, obs, act_env, next_obs, done):
+    def _rep_loss(self, obs, act_env, next_obs, done, rew):
         if self.normalize_obs:
             obs_n = self.obs_rms.normalize(obs)
             next_obs_n = self.obs_rms.normalize(next_obs)
