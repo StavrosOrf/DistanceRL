@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Optional
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import seaborn as sns
 
@@ -90,6 +91,13 @@ def summarize_results(max_rewards: pd.DataFrame) -> None:
     print(summary.to_string())
 
 
+def _format_env_label(env: str) -> str:
+    """Format environment name without version and in bold."""
+    if "-v" in env:
+        env = env.rsplit("-v", 1)[0]
+    return env
+
+
 def _apply_box_colors(ax: plt.Axes, colors: List) -> None:
     for patch, color in zip(ax.artists, colors):
         patch.set_facecolor(color)
@@ -133,10 +141,10 @@ def _plot_single_ablation(
         context="paper",
         palette="colorblind",
         rc={
-            "axes.labelsize": 10,
-            "axes.titlesize": 10,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
+            "axes.labelsize": 12,
+            "axes.titlesize": 12,
+            "xtick.labelsize": 12,
+            "ytick.labelsize": 12,
             "figure.dpi": dpi,
         },
     )
@@ -144,7 +152,7 @@ def _plot_single_ablation(
         nrows=1,
         ncols=len(envs),
         figsize=(fig_width, fig_height),
-        sharey=True,
+        sharey=False,
         squeeze=False,
     )
 
@@ -181,20 +189,42 @@ def _plot_single_ablation(
         legend = ax.get_legend()
         if legend is not None:
             legend.remove()
-        ax.set_title(env)
+        ax.set_title(_format_env_label(env), fontweight="bold")
         ax.set_xlabel(xlabel)
         if col_idx == 0:
-            ax.set_ylabel(ylabel)
+            ax.set_ylabel(ylabel, labelpad=6)
         else:
             ax.set_ylabel("")
             
         # Rotate tick labels to save horizontal space
         plt.setp(ax.get_xticklabels(), rotation=45, ha="right", rotation_mode="anchor")
 
-        ax.grid(axis="y", linestyle="--", linewidth=0.6, alpha=0.7)
-        
         # Scientific notation if rewards are large
         ax.ticklabel_format(axis="y", style="sci", scilimits=(3, 3))
+
+        # Custom y ticks: majors every 1000, minors every 500 (aligned to 500)
+        ymin, ymax = env_df["max_reward"].min(), env_df["max_reward"].max()
+        if np.isfinite(ymin) and np.isfinite(ymax):
+            minor_step = 500.0
+            major_step = 1000.0
+            start = np.floor(ymin / minor_step) * minor_step
+            end = np.ceil(ymax / minor_step) * minor_step
+
+            major_ticks = np.arange(
+                np.floor(start / major_step) * major_step,
+                np.ceil(end / major_step) * major_step + major_step * 0.1,
+                major_step,
+            )
+            minor_ticks = np.arange(start, end + minor_step * 0.1, minor_step)
+
+            if len(major_ticks) >= 2:
+                ax.set_yticks(major_ticks)
+            if len(minor_ticks) >= 2:
+                ax.set_yticks(minor_ticks, minor=True)
+
+        # Grids for both major and minor ticks
+        ax.grid(axis="y", which="major", linestyle="--", linewidth=0.6, alpha=0.7)
+        ax.grid(axis="y", which="minor", linestyle=":", linewidth=0.5, alpha=0.5)
 
         # Lighten spines for a clean paper look
         for spine in ["top", "right"]:
@@ -223,7 +253,7 @@ def plot_ablation_boxplots(
     # K ablation: fix rep_gamma_shape to the design value (observed 1.5 in the dataset)
     k_data = filter_for_k_ablation(max_rewards)
     k_order = sorted(k_data["K"].dropna().unique())
-    k_colors = sns.color_palette("Spectral", len(k_order))
+    k_colors = sns.color_palette("tab10", len(k_order))
 
     _plot_single_ablation(
         data=k_data,
@@ -246,7 +276,7 @@ def plot_ablation_boxplots(
     label_map = dict(zip(rep_order, rep_labels))
     gamma_data = gamma_data.copy()
     gamma_data["rep_gamma_label"] = gamma_data["rep_gamma_shape"].map(label_map)
-    rep_colors = sns.color_palette("rocket", len(rep_order))
+    rep_colors = sns.color_palette("tab10", len(rep_order))
 
     _plot_single_ablation(
         data=gamma_data,
