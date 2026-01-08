@@ -146,6 +146,8 @@ def _plot_single_ablation(
             "xtick.labelsize": 12,
             "ytick.labelsize": 12,
             "figure.dpi": dpi,
+            "axes.edgecolor": "black",
+            "axes.linewidth": 1,
         },
     )
     fig, axes = plt.subplots(
@@ -178,7 +180,7 @@ def _plot_single_ablation(
             dodge=False,
             ax=ax,
             palette=palette_map,
-            width=0.65,
+            width=0.85,
             fliersize=2.5,
             flierprops={"marker": "x", "markersize": 4, "alpha": 0.6},
             boxprops={"edgecolor": "black", "linewidth": 0.8},
@@ -223,12 +225,64 @@ def _plot_single_ablation(
                 ax.set_yticks(minor_ticks, minor=True)
 
         # Grids for both major and minor ticks
-        ax.grid(axis="y", which="major", linestyle="--", linewidth=0.6, alpha=0.7)
-        ax.grid(axis="y", which="minor", linestyle=":", linewidth=0.5, alpha=0.5)
+        ax.grid(axis="y", which="major", linestyle="--", linewidth=0.9, alpha=0.4)
+        ax.grid(axis="y", which="minor", linestyle="--", linewidth=0.5, alpha=0.35)
+        ax.set_axisbelow(True)
 
-        # Lighten spines for a clean paper look
+        # Spine and tick styling: black, outward ticks like reference figure
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax.spines[spine].set_color("black")
+            ax.spines[spine].set_linewidth(1.5)
+            
+        ax.tick_params(
+            axis="y",
+            which="major",
+            direction="out",
+            length=6,
+            width=1,
+            colors="black",
+            labelcolor="black",
+            left=True,
+            right=False,
+            zorder=3,
+        )
+        ax.tick_params(
+            axis="y",
+            which="minor",
+            direction="out",
+            length=3,
+            width=0.75,
+            colors="black",
+            labelcolor="black",
+            left=True,
+            right=False,
+            zorder=3,
+        )
+        ax.tick_params(
+            axis="x",
+            which="major",
+            direction="out",
+            length=3,
+            width=1,
+            colors="black",
+            labelcolor="black",
+            top=False,
+            bottom=True,
+        )
+        ax.tick_params(
+            axis="x",
+            which="minor",
+            direction="out",
+            length=4,
+            width=1.0,
+            colors="black",
+            labelcolor="black",
+            top=False,
+            bottom=True,
+        )
+        ax.set_facecolor("white")
 
     fig.tight_layout()
 
@@ -262,7 +316,7 @@ def plot_ablation_boxplots(
         order=k_order,
         colors=k_colors,
         xlabel="K",
-        ylabel="Max Reward",
+        ylabel="Max Episode Return",
         output_dir=output_dir,
         stem="repK_ablation_K_only",
         dpi=dpi,
@@ -285,7 +339,7 @@ def plot_ablation_boxplots(
         order=rep_labels,
         colors=rep_colors,
         xlabel="Gamma",
-        ylabel="Max Reward",
+        ylabel="Max Episode Return",
         output_dir=output_dir,
         stem="repK_ablation_gamma_only",
         dpi=dpi,
