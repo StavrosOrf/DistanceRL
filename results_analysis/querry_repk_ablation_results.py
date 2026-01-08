@@ -70,14 +70,15 @@ def data_fetcher():
     run_results = pd.DataFrame()
     result_summary = []
     # use tqdm to display a progress bar
-    for project_name in ["DistRL_Ablations"]:
+    for project_name in ["DistRL_RepK_Ablations"]:
         # Fetch runs from the specified project
         runs = api.runs(f"{entity_name}/{project_name}")
         print(f"Total runs fetched: {len(runs)}")
         for i, run in tqdm.tqdm(enumerate(runs), total=len(runs)):
                         
             #only parse form gorup_name RepK_Ablation_FixedHumanoid-v5 and RepK_Ablation_FixedHalfCheetah-v5
-            if not (run.group and (run.group.startswith("AblationExpsFixed"))):
+            if not (run.group and (run.group.startswith("RepK_Ablation_Fixed"))):
+                # print(f'Skipping run {run.name} with group {run.group}')
                 continue
 
             # Handle config - W&B wraps values in {"value": ...} format
@@ -111,8 +112,6 @@ def data_fetcher():
             if data is None:
                 continue
 
-            run_results = pd.concat([run_results, data], ignore_index=True)
-
             history = _fetch_history_with_retry(run, keys=['_runtime'])
             if history is None:
                 print(f"Run {run.id} skipped due to history fetch failures")
@@ -129,6 +128,12 @@ def data_fetcher():
             rep_gamma_shape = config.get('rep_gamma_shape', -999) if is_dist_agent else -999
             
             print(f'rep_gamma_shape: {rep_gamma_shape}, k_val: {k_val}')
+
+            # Attach metadata to full history to avoid mismatched keys later
+            data["K"] = k_val
+            data["rep_gamma_shape"] = rep_gamma_shape
+
+            run_results = pd.concat([run_results, data], ignore_index=True)
 
             if np.array(history["_runtime"])[-1]/3600 < 1:
                 continue
@@ -157,12 +162,12 @@ def data_fetcher():
     if not os.path.exists("./results_analysis/data"):
         os.makedirs("./results_analysis/data")
 
-    df.to_csv("./results_analysis/data/ablation_results_summary.csv",
+    df.to_csv("./results_analysis/data/repK_results_summary.csv",
               index=False)
 
-    run_results.to_csv("./results_analysis/data/ablation_results_full.csv",
+    run_results.to_csv("./results_analysis/data/repK_results_full.csv",
                        index=False)
-    print("Results saved to ablation_results_full.csv")
+    print("Results saved to repK_results_full.csv")
 
 
 def extract_eval_rewards(run, algo, env, seed) -> pd.DataFrame:

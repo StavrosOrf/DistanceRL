@@ -535,7 +535,7 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         return
     
     # Drop unwanted algorithms if any
-    drop_algos = ['SACDistanceAgentNew']
+    drop_algos = ['SACDistanceAgentNew', 'redq', 'RedQ', 'REDQ', 'v2DistAgent']
     df = df[~df["algo"].isin(drop_algos)]
     
     # Filter by max step
@@ -677,12 +677,12 @@ def visualize_paper_quality_mujoco(csv_path: Path,
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Plot training curves from CSV results")
-    parser.add_argument("--csv", type=Path, default=Path("results_analysis/data/results_full.csv"),
+    parser.add_argument("--csv", type=Path, default=Path("results_analysis/data/main_results_full.csv"),
                         help="Path to results_full.csv")
     parser.add_argument("--out", type=Path, default=Path("results_analysis/plots"),
                         help="Directory to save plot images")
     parser.add_argument("--show", default=False, action="store_true", help="Display plots interactively")
-    parser.add_argument("--ema-alpha", type=float, default=0.7,
+    parser.add_argument("--ema-alpha", type=float, default=0.75,
                         help="EMA smoothing factor (0-1). Higher=more smoothing. 0=disabled. Recommended: 0.1-0.5")
     parser.add_argument("--max-step", type=int, default=1_000_000,
                         help="Maximum training step to plot (set negative to include all)")
@@ -701,7 +701,7 @@ def main() -> None:
     
     if args.latex_table:
         # Generate LaTeX table with max average results for ALL environments
-        drop_algos = ['SACDistanceAgentNew']
+        drop_algos = ['SACDistanceAgentNew', 'redq', 'RedQ', 'REDQ', 'v2DistAgent']
         generate_latex_table(
             args.csv,
             args.out,

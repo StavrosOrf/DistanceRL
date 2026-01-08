@@ -1,0 +1,22 @@
+\begin{table}[ht]
+\centering
+\caption{Maximum average evaluation returns across environments. Results are reported as mean $\pm$ std over seeds (up to 1,000,000 steps).}
+\label{tab:results}
+\begin{tabular}{lrrrrr}
+\toprule
+\textbf{Environment} & \textbf{PPO} & \textbf{TD3} & \textbf{SAC} & \textbf{TQC} & \textbf{DistAgent} \\
+\midrule
+Ant & $918 \pm 72$ & $4366 \pm 1296$ & $4086 \pm 789$ & $3041 \pm 668$ & $4653 \pm 235$ \\
+HalfCheetah & $2363 \pm 1022$ & $10259 \pm 838$ & $10388 \pm 1069$ & $12114 \pm 1006$ & $9019 \pm 1617$ \\
+Hopper & $3527 \pm 284$ & $3584 \pm 77$ & $3371 \pm 84$ & $3571 \pm 65$ & $3573 \pm 114$ \\
+Humanoid & $554 \pm 62$ & $379 \pm 266$ & $5351 \pm 75$ & $6330 \pm 227$ & $7427 \pm 530$ \\
+InvertedDoublePendulum-v5 & $9350 \pm 16$ & $9358 \pm 2$ & $9360 \pm 0$ & $9360 \pm 0$ & $9360 \pm 0$ \\
+InvertedPendulum-v5 & $1000 \pm 0$ & $1000 \pm 0$ & $1000 \pm 0$ & $1000 \pm 0$ & $1000 \pm 0$ \\
+Reacher-v5 & $-3 \pm 0$ & $-3 \pm 0$ & $-2 \pm 0$ & $-2 \pm 0$ & $-3 \pm 0$ \\
+Swimmer & $114 \pm 25$ & $102 \pm 46$ & $77 \pm 10$ & $106 \pm 25$ & $88 \pm 28$ \\
+Walker2d & $4321 \pm 635$ & $4503 \pm 752$ & $4693 \pm 572$ & $4952 \pm 374$ & $5626 \pm 747$ \\
+\midrule
+\textbf{Total} & $2573 \pm 2913$ & $3925 \pm 3746$ & $4194 \pm 3673$ & $4389 \pm 4077$ & $4527 \pm 3514$ \\
+\bottomrule
+\end{tabular}
+\end{table}
