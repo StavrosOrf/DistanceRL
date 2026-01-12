@@ -169,7 +169,10 @@ def visualize_ablation(
     df = load_ablation_results(csv_path)
 
     # Drop unwanted ablation baselines
-    drop_algos = {"DistAblationRewardOnly"}
+    drop_algos = {"DistAblationRewardOnly",
+                  "v2DistAgent",
+                  "DistAblationA3"
+                  }
     df = df[~df["algo"].isin(drop_algos)]
 
     if env_filter:
