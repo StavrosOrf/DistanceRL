@@ -1,5 +1,29 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import seaborn as sns
+from matplotlib import cm
+from matplotlib.patches import FancyArrowPatch
+from matplotlib.legend_handler import HandlerTuple
+
+plt.rcParams.update({
+    "figure.dpi": 160,
+    "savefig.dpi": 300,
+    "savefig.bbox": "tight",
+    "savefig.pad_inches": 0.02,
+    "font.size": 14,
+    "axes.labelsize": 15,
+    "axes.titlesize": 15,
+    "legend.fontsize": 13,
+    "xtick.labelsize": 15,
+    "ytick.labelsize": 15,
+    "axes.linewidth": 1.0,
+    "lines.linewidth": 3.0,
+    "mathtext.fontset": "stix",
+    "font.family": "STIXGeneral",
+})
+
+palette = sns.color_palette("muted", 6)
+magma_colors = cm.get_cmap("magma")(np.linspace(0.25, 0.85, 3))
 
 rng = np.random.default_rng(2)
 # initial anchor action from current policy
@@ -87,13 +111,32 @@ a_opt = anchors[-1]
 # ----------------------------
 # Plot: clean trajectory + connected arrows; show sampled actions ONLY for LAST step
 # ----------------------------
-fig, ax = plt.subplots(figsize=(4,3))
+fig, ax = plt.subplots(figsize=(5, 3.5), constrained_layout=True)
 
-ax.contour(A1, A2, Q, levels=15, linewidths=0.8, alpha=0.5, cmap="viridis")
+contours = ax.contour(
+    A1,
+    A2,
+    Q,
+    levels=15,
+    linewidths=0.9,
+    alpha=0.55,
+    cmap="magma",
+)
 
-# Connected trajectory (no dots)
-ax.plot(anchors[:, 0], anchors[:, 1], linewidth=2.5, alpha=0.15,
-        zorder=2, color='red')
+traj_color = palette[0]
+arrow_color = "black"  # palette[1]
+sample_color = "limegreen"  #palette[5]
+start_color = palette[3]
+
+# Connected trajectory (soft line)
+ax.plot(
+    anchors[:, 0],
+    anchors[:, 1],
+    linewidth=2.4,
+    alpha=0.2,
+    zorder=2,
+    color=traj_color,
+)
 
 # Direction arrows along the trajectory
 stride = max(1, T // 22)  # ~20 arrows
@@ -101,80 +144,138 @@ x = anchors[:-1:stride, 0]
 y = anchors[:-1:stride, 1]
 dx = anchors[1::stride, 0] - anchors[:-1:stride, 0]
 dy = anchors[1::stride, 1] - anchors[:-1:stride, 1]
-#exclude last arrow to avoid overlap with sampled actions
+# exclude last arrow to avoid overlap with sampled actions
 x = x[:-1]
 y = y[:-1]
 dx = dx[:-1]
 dy = dy[:-1]
 
-ax.quiver(x, y, dx, dy, angles='xy',
-          scale_units='xy', scale=1,
-          width=0.005, 
-          alpha=1,
-          headwidth=5, 
-        # headlength=7, headaxislength=5,
-        zorder=4,
-          color='red',
-          )
+ax.quiver(
+    x,
+    y,
+    dx,
+    dy,
+    angles="xy",
+    scale_units="xy",
+    scale=1,
+    width=0.007,
+    alpha=0.9,
+    headwidth=5,
+    zorder=4,
+    color=arrow_color,
+)
+
 # LAST step sampled actions (colored by Q)
 a_last_anchor = anchors[-2]
 for p in last_neighbors:
-    ax.plot([a_last_anchor[0], p[0]], [a_last_anchor[1], p[1]], linewidth=0.9, alpha=0.24)
+    ax.plot(
+        [a_last_anchor[0], p[0]],
+        [a_last_anchor[1], p[1]],
+        linewidth=0.9,
+        alpha=0.25,
+        color=sample_color,
+    )
 
-sc = ax.scatter(last_neighbors[:, 0], last_neighbors[:, 1],
-                s=20,
-                c=last_q,
-                alpha=0.95,
-                zorder=3,)
+sc = ax.scatter(
+    last_neighbors[:, 0],
+    last_neighbors[:, 1],
+    s=28,
+    c=last_q,
+    alpha=0.9,
+    zorder=3,
+    cmap="magma",
+    edgecolor="white",
+    linewidth=0.4,
+)
 
-cbar = fig.colorbar(sc, ax=ax, 
-                    # pad=0.02,
-                    shrink=1)
-cbar.set_label(r"$Q(s_{t},a_{t})$")
+cbar = fig.colorbar(sc, ax=ax, shrink=1.0, pad=0.02)
+cbar.set_label(r"$Q(s_{t},a_{t})$", labelpad=6)
+cbar.ax.tick_params(labelsize=12)
+#set ticks from 0 to 1 with step 0.2
+cbar.set_ticks(np.arange(0, 1.01, 0.2))
 
-#cbar fontsize
-cbar.ax.tick_params(labelsize=7)
+# add a marker at the starting point
+# ax.scatter([a0[0]], [a0[1]], s=26, marker="o", color=start_color, zorder=5, edgecolor="white", linewidth=0.7)
 
-#add a marker at the starting point
-ax.scatter([a0[0]], [a0[1]], s=20, marker="o", color="r", zorder=5)
-
-#have yticks every 1 unit
+# have yticks every 1 unit
 ax.set_yticks(np.arange(a2[0], a2[-1] + 1, 1))
-#reduce font size of ticks
-ax.tick_params(axis='both', which='major', labelsize=8)
+ax.set_xticks(np.arange(a1[0], a1[-1] + 1, 1))
+ax.tick_params(axis="both", which="major", labelsize=12)
+ax.grid(True, color="0.9", linewidth=0.8, alpha=0.6)
 
 # Weighted direction at the last step
 ax.annotate(
-    "", xy=last_weighted, xytext=a_last_anchor,
-    arrowprops=dict(arrowstyle="->",
-                    linewidth=1.7,
-                    alpha=0.95,
-                    zorder=0,)
+    "",
+    xy=last_weighted,
+    xytext=a_last_anchor,
+    arrowprops=dict(
+        arrowstyle="-|>",
+        linewidth=2.5,
+        alpha=1,
+        color=sample_color,
+        zorder=1,
+    ),
 )
 
 from matplotlib.lines import Line2D
 # ---------- Legend (proxy artists) ----------
 legend_handles = [
-    Line2D([0], [0], color="red", lw=1.2, label="Policy Update"),
-    Line2D([0], [0], marker="o", color="w", markerfacecolor="g", markersize=6,
-           label="Sampled actions (last step)"),
-    
+    Line2D(
+        [0],
+        [0],
+        color=arrow_color,
+        lw=2,
+        marker=">",
+        markersize=8,
+        markevery=[1],
+        label="Past trajectory",
+    ),
+    (
+     Line2D([0], [0], marker="o", color="w", markerfacecolor=magma_colors[0],
+               markeredgecolor="white", markersize=6, linestyle=""),
+     Line2D([0], [0], marker="o", color="w", markerfacecolor=magma_colors[1],
+               markeredgecolor="white", markersize=6, linestyle=""),
+     Line2D([0], [0], marker="o", color="w", markerfacecolor=magma_colors[2],
+               markeredgecolor="white", markersize=6, linestyle=""),
+    ),
+        Line2D(
+        [0],
+        [0],
+        color=sample_color,
+        lw=2,
+        marker=">",
+        markersize=8,
+        markevery=[1],
+           label="Weighted direction (last step)"),
 ]
-ax.legend(handles=legend_handles, loc="lower left",
-          frameon=True, framealpha=0.9, fontsize=9)
+legend_labels = [
+    "Policy update steps",
+    "Sampled actions (final step)",
+    "Weighted update direction",
+]
+ax.legend(
+    handles=legend_handles,
+    labels=legend_labels,
+    loc="lower left",
+    frameon=True,
+    framealpha=0.9,
+    borderpad=0.4,
+    labelspacing=0.4,
+    handler_map={tuple: HandlerTuple(ndivide=None)},
+)
 
+# ax.spines["top"].set_visible(False)
+# ax.spines["right"].set_visible(False)
 
-# Final point marker
+# Final point marker (optional)
 # ax.scatter([a_opt[0]], [a_opt[1]], s=260, marker="s")
 
-# ax.set_title("Distance-RL: multi-step improvement (neighbors shown only at the last step)")
 ax.set_xlabel(r"Action Dim. 1")
 ax.set_ylabel(r"Action Dim. 2")
 ax.set_xlim(a1[0], a1[-1])
 ax.set_ylim(a2[0], a2[-1])
 
-plt.tight_layout()
 plt.show()
 
-# Optional save:
-fig.savefig("distance_rl_multistep_last_samples_clean.png", dpi=300, bbox_inches="tight")
+fig.savefig("ov.png", dpi=300, bbox_inches="tight")
+fig.savefig("ov.pdf", dpi=300, bbox_inches="tight")
