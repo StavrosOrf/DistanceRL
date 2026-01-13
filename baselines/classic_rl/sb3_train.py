@@ -129,10 +129,10 @@ def train_sb3_agent(
     elif algo == "td3":
         # Action noise for exploration
         n_actions = int(np.prod(train_env.action_space.shape))
-        action_noise = NormalActionNoise(
-            mean=np.zeros(n_actions),
-            sigma=float(config.get("expl_noise", 0.1)) * np.ones(n_actions)
-        )
+        # action_noise = NormalActionNoise(
+        #     mean=np.zeros(n_actions),
+        #     sigma=float(config.get("expl_noise", 0.1)) * np.ones(n_actions)
+        # )
 
         model = TD3(
             config.get("policy", "MlpPolicy"),
@@ -151,7 +151,7 @@ def train_sb3_agent(
             gradient_steps=config.get("gradient_steps", 1),
             target_policy_noise=float(config.get("policy_noise", 0.2)),
             target_noise_clip=float(config.get("noise_clip", 0.5)),
-            action_noise=action_noise,
+            # action_noise=action_noise,
             policy_kwargs=config.get("policy_kwargs")
                 or {"net_arch": config.get("net_arch", [config.get("hidden_size", 256),
                                                         config.get("hidden_size", 256)])},
