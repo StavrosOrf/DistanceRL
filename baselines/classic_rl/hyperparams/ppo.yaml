@@ -1,6 +1,6 @@
 Ant-v5:
   total_steps: 1000000
-  n_envs: 1
+  n_envs: 16
   n_steps: 2048
   batch_size: 64
   n_epochs: 10
@@ -26,7 +26,7 @@ Ant-v5:
 
 HalfCheetah-v5:
   total_steps: 1000000
-  n_envs: 1
+  n_envs: 16
   n_steps: 2048
   batch_size: 64
   n_epochs: 10
@@ -76,7 +76,7 @@ Hopper-v5:
   eval_episodes: 10
 Humanoid-v5:
   total_steps: 3000000
-  n_envs: 1
+  n_envs: 16
   n_steps: 2048
   batch_size: 64
   n_epochs: 10
@@ -124,6 +124,7 @@ InvertedDoublePendulum-v5:
   normalize_reward: false
   eval_interval: 10000
   eval_episodes: 10
+
 InvertedPendulum-v5:
   total_steps: 1000000
   n_envs: 1

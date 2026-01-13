@@ -8,7 +8,8 @@ import gymnasium as gym
 from stable_baselines3 import PPO, TD3, SAC
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.noise import NormalActionNoise
-from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize, SubprocVecEnv
+from stable_baselines3.common.env_util import make_vec_env
 from wandb.integration.sb3 import WandbCallback
 
 
@@ -44,12 +45,8 @@ def _maybe_wrap_vecnormalize(env, eval_env, use_norm_obs: bool, use_norm_reward:
     if not use_norm_obs and not use_norm_reward:
         return env, eval_env, None
 
-    # Make them Vec envs
-    train_v = DummyVecEnv([lambda: env])
-    eval_v = DummyVecEnv([lambda: eval_env])
-
-    train_v = VecNormalize(train_v, norm_obs=use_norm_obs, norm_reward=use_norm_reward)
-    eval_v = VecNormalize(eval_v, norm_obs=use_norm_obs, norm_reward=use_norm_reward, training=False)
+    train_v = VecNormalize(env, norm_obs=use_norm_obs, norm_reward=use_norm_reward)
+    eval_v = VecNormalize(eval_env, norm_obs=use_norm_obs, norm_reward=use_norm_reward, training=False)
     return train_v, eval_v, train_v
 
 
@@ -74,11 +71,19 @@ def train_sb3_agent(
     print(config)
 
     # ---- envs ----
-    # Seed envs via reset below (Gymnasium API)
-    train_env = gym.make(env_id)
-    _obs, _info = train_env.reset(seed=seed)
-    eval_env = gym.make(env_id)
-    _obs_e, _info_e = eval_env.reset(seed=seed + 123)
+    algo_lower = algo.lower()
+    n_envs = int(config.get("n_envs", 1))
+
+    if algo_lower == "ppo":
+        vec_env_cls = SubprocVecEnv if n_envs > 1 else DummyVecEnv
+        train_env = make_vec_env(env_id, n_envs=n_envs, seed=seed, vec_env_cls=vec_env_cls)
+        eval_env = make_vec_env(env_id, n_envs=1, seed=seed + 123, vec_env_cls=DummyVecEnv)
+    else:
+        # Seed envs via reset below (Gymnasium API)
+        train_env = gym.make(env_id)
+        _obs, _info = train_env.reset(seed=seed)
+        eval_env = gym.make(env_id)
+        _obs_e, _info_e = eval_env.reset(seed=seed + 123)
 
     # ---- evaluation callback (freq and episodes from YAML) ----
     eval_callback = EvalCallback(
@@ -89,10 +94,9 @@ def train_sb3_agent(
         render=False,
     )
 
-    algo = algo.lower()
     model = None
 
-    if algo == "ppo":
+    if algo_lower == "ppo":
         # Optional obs normalization (your YAML uses this for MuJoCo PPO)
         normalize_obs = bool(config.get("normalize_obs", False))
         normalize_reward = bool(config.get("normalize_reward", False))
@@ -126,7 +130,7 @@ def train_sb3_agent(
             seed=seed,
         )
 
-    elif algo == "td3":
+    elif algo_lower == "td3":
         # Action noise for exploration
         n_actions = int(np.prod(train_env.action_space.shape))
         # action_noise = NormalActionNoise(
@@ -158,7 +162,7 @@ def train_sb3_agent(
             seed=seed,
         )
 
-    elif algo == "sac":
+    elif algo_lower == "sac":
         model = SAC(
             config.get("policy", "MlpPolicy"),
             train_env,
@@ -179,7 +183,7 @@ def train_sb3_agent(
             seed=seed,
         )
 
-    elif algo == "tqc":
+    elif algo_lower == "tqc":
         try:
             from sb3_contrib import TQC
         except ImportError as e:

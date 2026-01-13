@@ -40,7 +40,7 @@ def batch_runner():
 
     partition = 'gpu'  # gpu-a100 # gpu-a100-small # gpu, compute
     # algos_to_run = ['DistAgent', 'REDQ']
-    algos_to_run = ['v2DistAgent']
+    algos_to_run = ['ppo'] # td3
     group_name = "Results"
     project_name = "DistRL_Exps"  # DistRL_Rep
 
@@ -79,14 +79,14 @@ def batch_runner():
 
     seed_grid = [92, 82, 72, 62, 52, 42, 32, 22, 12, 2]
     # seed_grid = [42, 32, 22, 12, 2]
-    # seed_grid = [2]
+    seed_grid = [2]
     # seed_grid = [82, 72, 62, 52, 92]
 
     # if directory does not exist, create it
     if not os.path.exists('./slurm_logs'):
         os.makedirs('./slurm_logs')
 
-    for env in MUJOCO_ENVS:        
+    for env in ['Humanoid-v5']:        
         if env in ['Humanoid-v5']:
             cpu_cores = 3
         else:
@@ -114,6 +114,7 @@ def batch_runner():
                     job_hours = 45
 
                 training_steps = steps_per_env[env]
+                training_steps = 1_000_000
 
                 run_name = f"{algo}_seed{seed}"
                 run_name += f"_{env}"
