@@ -643,6 +643,12 @@ def visualize_paper_quality_mujoco(csv_path: Path,
     sns.set_context("paper", font_scale=1.3)
     sns.set_palette("colorblind")
     
+    
+    plt.rcParams.update({
+        "mathtext.fontset": "stix",
+        "font.family": "STIXGeneral",
+    })
+    
     # Create figure with 1 row, 4 columns
     fig, axes = plt.subplots(1, 4, figsize=(20, 4))
     
@@ -660,11 +666,12 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         'td3': 'TD3',
         'ppo': 'PPO',
         'tqc': 'TQC',
+        "DistAgent": 'SAVGO (ours)',
     })
 
     # Color palette for algorithms (professional colors)
     algo_colors = {
-        'DistAgent': '#1f77b4',  # Blue
+        'SAVGO (ours)': '#1f77b4',  # Blue
         'TD3': '#ff7f0e',  # Orange
         'PPO': '#2ca02c',  # Green
         'SAC': '#d62728',  # Red
@@ -680,7 +687,7 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         
         if len(env_df) == 0:
             ax.text(0.5, 0.5, 'No data', ha='center', va='center', transform=ax.transAxes)
-            ax.set_title(env_names.get(env, env), fontsize=18, fontweight='bold')
+            ax.set_title(env_names.get(env, env), fontsize=19, fontweight='bold')
             continue
         
         # Plot each algorithm
@@ -708,11 +715,11 @@ def visualize_paper_quality_mujoco(csv_path: Path,
                                color=line[0].get_color())
         
         # Styling
-        ax.set_title(env_names.get(env, env), fontsize=18, fontweight='bold', pad=10)
-        ax.set_xlabel('Training Steps', fontsize=18)
+        ax.set_title(env_names.get(env, env), fontsize=20, fontweight='bold', pad=10)
+        ax.set_xlabel('Training Steps', fontsize=19)
         
         if idx == 0:
-            ax.set_ylabel('Episode Return', fontsize=18)
+            ax.set_ylabel('Episode Return', fontsize=19)
         
         # Format x-axis to show steps in millions
         ax.ticklabel_format(style='scientific', axis='x', scilimits=(6,6))
@@ -753,8 +760,8 @@ def visualize_paper_quality_mujoco(csv_path: Path,
             frameon=True,
             fancybox=True,
             shadow=True,
-            fontsize=18,
-            bbox_to_anchor=(0.51, 1.035)
+            fontsize=20,
+            bbox_to_anchor=(0.51, 1.075)
         )
     
     # Adjust layout to make room for legend
