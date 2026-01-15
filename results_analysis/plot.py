@@ -23,7 +23,7 @@ plt.rcParams.update({
 })
 
 palette = sns.color_palette("muted", 6)
-magma_colors = cm.get_cmap("magma")(np.linspace(0.25, 0.85, 3))
+magma_colors = cm.get_cmap("inferno")(np.linspace(0.25, 0.85, 3))
 
 rng = np.random.default_rng(2)
 # initial anchor action from current policy
@@ -120,7 +120,7 @@ contours = ax.contour(
     levels=15,
     linewidths=0.9,
     alpha=0.55,
-    cmap="magma",
+    cmap="inferno",
 )
 
 traj_color = palette[0]
@@ -183,9 +183,9 @@ sc = ax.scatter(
     c=last_q,
     alpha=0.9,
     zorder=3,
-    cmap="magma",
-    edgecolor="white",
-    linewidth=0.4,
+    cmap="inferno",
+    edgecolor="grey",
+    linewidth=1,
 )
 
 cbar = fig.colorbar(sc, ax=ax, shrink=1.0, pad=0.02)

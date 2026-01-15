@@ -27,7 +27,7 @@ plt.rcParams.update({
 })
 
 palette = sns.color_palette("muted", 6)
-magma = cm.get_cmap("magma")
+magma = cm.get_cmap("inferno")
 magma_colors = magma(np.linspace(0.25, 0.85, 3))
 
 arrow_color  = "black"      # anchor
@@ -144,22 +144,37 @@ for i in range(K):
 # Candidate tips
 ax.scatter(
     Z[:, 0], Z[:, 1], Z[:, 2],
-    s=12, c=q01, cmap="magma", norm=norm01,
-    edgecolors="white", linewidths=0.45,
-    alpha=0.95, zorder=5
+    s=12, c=q01, cmap="inferno", norm=norm01,
+    edgecolors="grey", linewidths=0.45,
+    alpha=0.95, zorder=0
+)
+
+#put a big sphere around the origin
+u_sphere, v_sphere = np.mgrid[0:2*np.pi:60j, 0:np.pi:30j]
+x_sphere = 1.0 * np.cos(u_sphere) * np.sin(v_sphere)
+y_sphere = 1.0 * np.sin(u_sphere) * np.sin(v_sphere)
+z_sphere = 1.0 * np.cos(v_sphere)
+ax.plot_surface(
+    x_sphere, y_sphere, z_sphere,
+    rstride=4, cstride=4,
+    color="grey", alpha=0.08,
+    edgecolor="none",
+    zorder=0
 )
 
 # Anchor (black)
 ax.quiver(0, 0, 0, *z_anchor, length=0.95, normalize=False,
           linewidth=3.2, alpha=0.98, color=arrow_color,
-          arrow_length_ratio=0.26)
+          arrow_length_ratio=0.26,
+          zorder=10)
 # ax.scatter([z_anchor[0]],[z_anchor[1]],[z_anchor[2]],
 #            s=55, color=arrow_color, edgecolors="white", linewidths=0.6, zorder=6)
 
 # Weighted direction (limegreen)
 ax.quiver(0, 0, 0, *v_sum_unit, length=0.95, normalize=False,
           linewidth=3.4, alpha=0.95, color=sample_color,
-          arrow_length_ratio=0.26)
+          arrow_length_ratio=0.26,
+          zorder=20)
 # ax.scatter([v_sum_unit[0]],[v_sum_unit[1]],[v_sum_unit[2]],
 #            s=55, color=sample_color, edgecolors="white", linewidths=0.6, zorder=6)
 
@@ -175,11 +190,11 @@ arr = Arrow3D(
     [arc[j0, 1], arc[j1, 1]],
     [arc[j0, 2], arc[j1, 2]],
     mutation_scale=16,
-    lw=0.0,
+    lw=1.0,
     arrowstyle="-|>",
     color=traj_color,
     alpha=0.95,
-    zorder=40
+    zorder=400
 )
 ax.add_artist(arr)
 
@@ -231,7 +246,7 @@ set_axes_equal(ax)
 mappable = cm.ScalarMappable(norm=norm01, cmap=magma)
 mappable.set_array([])
 cbar = fig.colorbar(mappable, ax=ax, fraction=0.035, pad=0.1, shrink=0.65)
-cbar.set_label(r"$Q(s,a)$", labelpad=8)
+cbar.set_label(r"$Q(s_{t},a_{t})$", labelpad=8)
 cbar.set_ticks(np.arange(0, 1.01, 0.2))
 cbar.ax.tick_params(labelsize=10)
 

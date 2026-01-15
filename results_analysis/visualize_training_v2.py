@@ -716,10 +716,10 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         
         # Styling
         ax.set_title(env_names.get(env, env), fontsize=20, fontweight='bold', pad=10)
-        ax.set_xlabel('Training Steps', fontsize=19)
+        ax.set_xlabel('Training Steps', fontsize=21)
         
         if idx == 0:
-            ax.set_ylabel('Episode Return', fontsize=19)
+            ax.set_ylabel('Episode Return', fontsize=21)
         
         # Format x-axis to show steps in millions
         ax.ticklabel_format(style='scientific', axis='x', scilimits=(6,6))
@@ -730,11 +730,11 @@ def visualize_paper_quality_mujoco(csv_path: Path,
         
         # Use more granular y-ticks and scientific notation for better readability
         ax.yaxis.set_major_locator(ticker.MaxNLocator(nbins=6, prune=None))
-        ax.ticklabel_format(style='sci', axis='y', scilimits=(3, 3))
+        ax.ticklabel_format(style='sci', axis='y', scilimits=(3, 3),)
 
         #change x-tick and y-tick font size
-        ax.tick_params(axis='x', labelsize=17)
-        ax.tick_params(axis='y', labelsize=17)
+        ax.tick_params(axis='x', labelsize=19)
+        ax.tick_params(axis='y', labelsize=19)
         
         # Grid
         ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
@@ -760,8 +760,8 @@ def visualize_paper_quality_mujoco(csv_path: Path,
             frameon=True,
             fancybox=True,
             shadow=True,
-            fontsize=20,
-            bbox_to_anchor=(0.51, 1.075)
+            fontsize=21,
+            bbox_to_anchor=(0.51, 1.095)
         )
     
     # Adjust layout to make room for legend

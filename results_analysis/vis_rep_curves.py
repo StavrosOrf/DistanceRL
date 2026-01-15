@@ -22,17 +22,17 @@ def main() -> None:
 
     # --- Paper-ready matplotlib style ---
     plt.rcParams.update({
-        "figure.figsize": (5, 3),
+        "figure.figsize": (5, 2.5),
         "figure.dpi": 160,
         "savefig.dpi": 300,
         "savefig.bbox": "tight",
         "savefig.pad_inches": 0.02,
-        "font.size": 12,
-        "axes.titlesize": 13,
-        "axes.labelsize": 13,
+        "font.size": 13,
+        "axes.titlesize": 15,
+        "axes.labelsize": 14,
         "legend.fontsize": 11,
-        "xtick.labelsize": 11,
-        "ytick.labelsize": 11,
+        "xtick.labelsize": 12,
+        "ytick.labelsize": 12,
         "axes.linewidth": 1.0,
         "lines.linewidth": 2.0,
         "lines.solid_capstyle": "round",
@@ -62,7 +62,7 @@ def main() -> None:
 
     # Labels and title
     ax.set_xlabel(r"Normalized Value Gap $\Delta_{i,j}$")
-    ax.set_ylabel(r"Target Cosine Similarity $Y_{i,j}$")
+    ax.set_ylabel(r"Target Cos. Sim. $Y_{i,j}$")
 
     # Limits, ticks, and grid
     ax.set_xlim(-0.015, 1.015)
@@ -77,9 +77,11 @@ def main() -> None:
         loc="upper right",
         frameon=True,
         fancybox=False,
-        framealpha=0.9,
-        borderpad=0.5,
-        handlelength=1.8,
+        ncol=2,
+        columnspacing=0.7,
+        framealpha=0.85,
+        borderpad=0.6,
+        handlelength=1.3,
     )
     leg.get_frame().set_edgecolor("0.75")
     leg.get_frame().set_linewidth(0.9)

@@ -122,12 +122,14 @@ def data_fetcher():
 
             run_results = pd.concat([run_results, data], ignore_index=True)
 
-            history = _fetch_history_with_retry(run, keys=['_runtime'])
+            step_key = 'global_step' if algo in SB3_ALGOS else 'step'
+
+            history = _fetch_history_with_retry(run, keys=[step_key, '_runtime'])
             if history is None:
                 print(f"Run {run.id} skipped due to history fetch failures")
                 continue
-            if '_runtime' not in history:
-                print(f"Run {run.id} has no _runtime key")
+            if '_runtime' not in history or step_key not in history:
+                print(f"Run {run.id} missing required keys (runtime/steps)")
                 continue
 
             best_reward = data['eval_reward'].max()
@@ -139,14 +141,27 @@ def data_fetcher():
             
             print(f'rep_gamma_shape: {rep_gamma_shape}, k_val: {k_val}')
 
-            if np.array(history["_runtime"])[-1]/3600 < 1:
+            runtime_hours = np.array(history["_runtime"])[-1]/3600
+            if runtime_hours < 1:
                 continue
+
+            # First timestamp (in hours) when training reached >= 1M steps.
+            hours_to_1m: float = np.nan
+            try:
+                steps_series = history[step_key]
+                runtime_series = history["_runtime"]
+                reached_mask = (steps_series >= 1_000_000) & runtime_series.notna()
+                if reached_mask.any():
+                    hours_to_1m = float(runtime_series[reached_mask].iloc[0]) / 3600.0
+            except Exception as err:
+                print(f"    Could not compute hours_to_1M for {run.name}: {err}")
 
             results = {
                 "algorithm": algo,
                 "env": env_id,
                 "seed": seed,
-                "runtime": round(np.array(history["_runtime"])[-1]/3600, 2),
+                "runtime": round(runtime_hours, 2),
+                "hours_to_1M": round(hours_to_1m, 2) if np.isfinite(hours_to_1m) else np.nan,
                 "train_steps": train_steps,
                 "K": k_val,
                 "rep_gamma_shape": rep_gamma_shape,
