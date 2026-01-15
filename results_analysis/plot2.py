@@ -14,12 +14,12 @@ plt.rcParams.update({
     "savefig.dpi": 300,
     "savefig.bbox": "tight",
     "savefig.pad_inches": 0.02,
-    "font.size": 14,
-    "axes.labelsize": 15,
-    "axes.titlesize": 15,
-    "legend.fontsize": 12,
-    "xtick.labelsize": 15,
-    "ytick.labelsize": 15,
+    "font.size": 11,
+    "axes.labelsize": 11,
+    "axes.titlesize": 11,
+    "legend.fontsize": 11,
+    "xtick.labelsize": 10,
+    "ytick.labelsize": 10,
     "axes.linewidth": 1.0,
     "lines.linewidth": 3.0,
     "mathtext.fontset": "stix",
@@ -88,8 +88,8 @@ def spherical_arc(a, b, n=90):
 # ----------------------------
 # Synthetic sphere embeddings + Q utilities (replace with your real data)
 # ----------------------------
-rng = np.random.default_rng(6)
-K = 16
+rng = np.random.default_rng(9)
+K = 32
 
 Z = rng.normal(size=(K, 3))
 Z = np.array([normalize(v) for v in Z])
@@ -113,7 +113,7 @@ z_anchor = normalize(np.array([0,0, 1]))
 # ----------------------------
 # Plot
 # ----------------------------
-fig = plt.figure(figsize=(4, 4), constrained_layout=False)
+fig = plt.figure(figsize=(4.5,3), constrained_layout=False)
 ax = fig.add_subplot(111, projection="3d")
 
 # Unit sphere wireframe
@@ -132,32 +132,36 @@ for i in range(K):
     ax.quiver(
         0, 0, 0,
         Z[i, 0], Z[i, 1], Z[i, 2],
-        length=1.0, normalize=False,
-        linewidth=lw, alpha=a, color=col,
-        arrow_length_ratio=0.22
+        length=0.95,
+        normalize=False,
+        linewidth=lw, 
+        alpha=a, color=col,
+        # headlength=8,
+        # headwidth=6,
+        arrow_length_ratio=0.2
     )
 
 # Candidate tips
 ax.scatter(
     Z[:, 0], Z[:, 1], Z[:, 2],
-    s=22, c=q01, cmap="magma", norm=norm01,
+    s=12, c=q01, cmap="magma", norm=norm01,
     edgecolors="white", linewidths=0.45,
     alpha=0.95, zorder=5
 )
 
 # Anchor (black)
-ax.quiver(0, 0, 0, *z_anchor, length=1.0, normalize=False,
+ax.quiver(0, 0, 0, *z_anchor, length=0.95, normalize=False,
           linewidth=3.2, alpha=0.98, color=arrow_color,
           arrow_length_ratio=0.26)
-ax.scatter([z_anchor[0]],[z_anchor[1]],[z_anchor[2]],
-           s=55, color=arrow_color, edgecolors="white", linewidths=0.6, zorder=6)
+# ax.scatter([z_anchor[0]],[z_anchor[1]],[z_anchor[2]],
+#            s=55, color=arrow_color, edgecolors="white", linewidths=0.6, zorder=6)
 
 # Weighted direction (limegreen)
-ax.quiver(0, 0, 0, *v_sum_unit, length=1.0, normalize=False,
+ax.quiver(0, 0, 0, *v_sum_unit, length=0.95, normalize=False,
           linewidth=3.4, alpha=0.95, color=sample_color,
           arrow_length_ratio=0.26)
-ax.scatter([v_sum_unit[0]],[v_sum_unit[1]],[v_sum_unit[2]],
-           s=55, color=sample_color, edgecolors="white", linewidths=0.6, zorder=6)
+# ax.scatter([v_sum_unit[0]],[v_sum_unit[1]],[v_sum_unit[2]],
+#            s=55, color=sample_color, edgecolors="white", linewidths=0.6, zorder=6)
 
 # ---- Curved arrow on the sphere: anchor -> weighted direction (great-circle arc) ----
 arc = spherical_arc(z_anchor, v_sum_unit, n=120)
@@ -194,28 +198,28 @@ legend_handles = [
             markeredgecolor="white", markersize=7, linestyle="")),
     Line2D([0],[0], color=sample_color, lw=3, marker=">", markersize=9, markevery=[1],
            label="Weighted direction"),
-    # Line2D([0],[0], color=traj_color, lw=3, label="Update path on sphere"),
+    Line2D([0],[0], color=traj_color, lw=3, label="Update path on sphere"),
 ]
 legend_labels = [
     "Anchor action embedding",
     "Candidate embeddings",
     "Weighted update direction",
-    # "Direction of update",
+    "Gradient of update",
 ]
 ax.legend(
     legend_handles, legend_labels,
     loc="lower left",
-    bbox_to_anchor=(0.0, 1.02),
+    bbox_to_anchor=(-0.43, 0.84),
     frameon=True, framealpha=0.92,
-    borderpad=0.4, labelspacing=0.4,
+    borderpad=0.4, labelspacing=0.2,
     ncol=2,
     handler_map={tuple: plt.matplotlib.legend_handler.HandlerTuple(ndivide=None)}
 )
 
 # Labels / view
-# ax.set_xlabel("Embedding Dim. 1")
-# ax.set_ylabel("Embedding Dim. 2")
-# ax.set_zlabel("Embedding Dim. 3")
+ax.set_xlabel("Dim. 1")
+ax.set_ylabel("Dim. 2")
+ax.set_zlabel("Dim. 3")
 
 ax.view_init(elev=18, azim=45)
 ax.set_xlim(-1.0, 1.0)
@@ -226,14 +230,15 @@ set_axes_equal(ax)
 # Colorbar: normalized Q in [0,1]
 mappable = cm.ScalarMappable(norm=norm01, cmap=magma)
 mappable.set_array([])
-# cbar = fig.colorbar(mappable, ax=ax, fraction=0.035, pad=0.02, shrink=0.8)
-# cbar.set_label(r"$Q(s,a)$", labelpad=8)
-# cbar.set_ticks(np.arange(0, 1.01, 0.2))
-# cbar.ax.tick_params(labelsize=12)
+cbar = fig.colorbar(mappable, ax=ax, fraction=0.035, pad=0.1, shrink=0.65)
+cbar.set_label(r"$Q(s,a)$", labelpad=8)
+cbar.set_ticks(np.arange(0, 1.01, 0.2))
+cbar.ax.tick_params(labelsize=10)
 
 ax.set_xticks([-1, 0, 1])
 ax.set_yticks([-1, 0, 1])
 ax.set_zticks([-1, 0, 1])
+# ax.tick_params(pad=-2)
 
 #add minor ticks every at 0.5 intervals with dotted grid lines
 ax.xaxis.set_minor_locator(plt.MultipleLocator(0.5))
@@ -242,5 +247,5 @@ ax.zaxis.set_minor_locator(plt.MultipleLocator(0.5))
 
 # Save
 fig.savefig("sphere_geometry_curved_update.png", dpi=300, bbox_inches="tight")
-fig.savefig("sphere_geometry_curved_update.pdf", dpi=300, bbox_inches="tight")
+fig.savefig("sphere_geometry_curved_update.pdf", dpi=300 )#, bbox_inches="tight")
 # plt.show()
