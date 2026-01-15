@@ -148,10 +148,10 @@ def _line_plot_with_errorbars(
         context="paper",
         palette="colorblind",
         rc={
-            "axes.labelsize": 14,
+            "axes.labelsize": 15,
             "axes.titlesize": 15,
-            "xtick.labelsize": 14,
-            "ytick.labelsize": 13,
+            "xtick.labelsize": 15,
+            "ytick.labelsize": 15,
             "figure.dpi": dpi,
             "axes.edgecolor": "black",
             "axes.linewidth": 1,
@@ -200,11 +200,12 @@ def _line_plot_with_errorbars(
             fmt="-o",
             color=color,
             ecolor=color,
-            elinewidth=1,
-            capsize=3,
-            markersize=4.5,
-            linewidth=1.4,
-            alpha=0.95,
+            elinewidth=2,
+            capsize=5,
+            capthick=3,
+            markersize=6,
+            linewidth=2.4,
+            alpha=0.85,
         )
 
         # Scatter individual runs to visualize dispersion/outliers.
@@ -216,10 +217,12 @@ def _line_plot_with_errorbars(
         ax.scatter(
             scatter_x,
             scatter_y,
-            s=14,
+            s=30,
             color="gray",
-            alpha=0.45,
+            alpha=0.65,
             edgecolors="none",
+            # change scatter symbol to x
+            # marker="x",
         )
 
         ax.set_title(_format_env_label(env), fontweight="bold")
@@ -313,6 +316,9 @@ def _line_plot_with_errorbars(
             top=False,
             bottom=True,
         )
+        if x_col == "K":
+            ax.tick_params(axis="x", which="major", labelsize=14)
+            ax.tick_params(axis="x", which="minor", labelsize=14)
         ax.set_facecolor("white")
 
     fig.tight_layout()
@@ -342,7 +348,7 @@ def plot_ablation_lines(
         data=k_data,
         envs=envs,
         x_col="K",
-        xlabel="K",
+        xlabel="$K$",
         ylabel="Max Episode Return",
         output_dir=output_dir,
         stem=f"repK_ablation_K_only_v2_gamma_{target_gamma}",
